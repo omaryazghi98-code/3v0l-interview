@@ -1,16 +1,16 @@
-// 3V0L Audio Bridge prototype
-// Captures rendered audio from a target Windows process tree using
-// the Windows Application Loopback API. This first milestone writes
-// a WAV file so we can prove Discord-only capture works before adding
-// LAN streaming and Deepgram.
+// 3V0L Audio Bridge
+// Windows process-loopback capture with optional LAN PCM transport.
+// The capture side runs on the interview PC. PCM16 mono is sent directly
+// to the PC3 STT relay over TCP when a host/port are supplied.
 
 #include <windows.h>
 #include <audioclient.h>
 #include <audioclientactivationparams.h>
-#include <mmdeviceapi.h>
 #include <avrt.h>
 #include <wrl.h>
-#include <functiondiscoverykeys_devpkey.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <ksmedia.h>
 
 #include <atomic>
 #include <chrono>
@@ -19,11 +19,10 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
-#include <memory>
 #include <string>
-#include <thread>
 #include <vector>
 
+#pragma comment(lib, "ws2_32.lib")
 using Microsoft::WRL::ComPtr;
 
 namespace {
@@ -63,60 +62,42 @@ public:
         }
         return E_NOINTERFACE;
     }
-
-    ULONG STDMETHODCALLTYPE AddRef() override { return ++refCount_; }
-
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs_; }
     ULONG STDMETHODCALLTYPE Release() override {
-        ULONG v = --refCount_;
+        ULONG v = --refs_;
         if (!v) delete this;
         return v;
     }
-
     HRESULT STDMETHODCALLTYPE ActivateCompleted(IActivateAudioInterfaceAsyncOperation* operation) override {
-        HRESULT hr = E_FAIL;
+        HRESULT activationHr = E_FAIL;
         ComPtr<IUnknown> activated;
-        if (operation) {
-            hr = operation->GetActivateResult(&hr, &activated);
-        }
-        resultHr_ = hr;
+        if (operation) activationHr = operation->GetActivateResult(&activationHr, &activated);
+        resultHr_ = activationHr;
         activated_ = activated;
-        completed_.store(true);
         SetEvent(event_);
         return S_OK;
     }
-
     HANDLE event() const { return event_; }
     HRESULT resultHr() const { return resultHr_; }
     ComPtr<IUnknown> activated() const { return activated_; }
-
     ActivationHandler() : event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
     ~ActivationHandler() override { if (event_) CloseHandle(event_); }
-
 private:
-    std::atomic<ULONG> refCount_{1};
+    std::atomic<ULONG> refs_{1};
     HANDLE event_ = nullptr;
-    std::atomic<bool> completed_{false};
     HRESULT resultHr_ = E_FAIL;
     ComPtr<IUnknown> activated_;
 };
 
-bool writeHeader(std::ofstream& out, const WavHeader& h) {
-    out.seekp(0, std::ios::beg);
-    out.write(reinterpret_cast<const char*>(&h), sizeof(h));
-    return static_cast<bool>(out);
-}
-
-bool convertToPcm16(const BYTE* src, UINT32 frames, const WAVEFORMATEX* format, std::vector<int16_t>& dst) {
-    if (!src || !format) return false;
-    const size_t samples = static_cast<size_t>(frames) * format->nChannels;
+bool convertToPcm16(const BYTE* src, UINT32 frames, const WAVEFORMATEX* fmt, std::vector<int16_t>& dst) {
+    if (!src || !fmt) return false;
+    const size_t samples = static_cast<size_t>(frames) * fmt->nChannels;
     dst.resize(samples);
-
-    if (format->wFormatTag == WAVE_FORMAT_PCM && format->wBitsPerSample == 16) {
+    if (fmt->wFormatTag == WAVE_FORMAT_PCM && fmt->wBitsPerSample == 16) {
         std::memcpy(dst.data(), src, samples * sizeof(int16_t));
         return true;
     }
-
-    if (format->wFormatTag == WAVE_FORMAT_IEEE_FLOAT && format->wBitsPerSample == 32) {
+    if (fmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT && fmt->wBitsPerSample == 32) {
         const float* in = reinterpret_cast<const float*>(src);
         for (size_t i = 0; i < samples; ++i) {
             float v = in[i];
@@ -126,15 +107,13 @@ bool convertToPcm16(const BYTE* src, UINT32 frames, const WAVEFORMATEX* format, 
         }
         return true;
     }
-
-    // Handle extensible formats that ultimately carry PCM16 or float32.
-    if (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE && format->cbSize >= 22) {
-        auto* ext = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(format);
-        if (IsEqualGUID(ext->SubFormat, KSDATAFORMAT_SUBTYPE_PCM) && format->wBitsPerSample == 16) {
+    if (fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE && fmt->cbSize >= 22) {
+        const auto* ext = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(fmt);
+        if (IsEqualGUID(ext->SubFormat, KSDATAFORMAT_SUBTYPE_PCM) && fmt->wBitsPerSample == 16) {
             std::memcpy(dst.data(), src, samples * sizeof(int16_t));
             return true;
         }
-        if (IsEqualGUID(ext->SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) && format->wBitsPerSample == 32) {
+        if (IsEqualGUID(ext->SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) && fmt->wBitsPerSample == 32) {
             const float* in = reinterpret_cast<const float*>(src);
             for (size_t i = 0; i < samples; ++i) {
                 float v = in[i];
@@ -145,225 +124,160 @@ bool convertToPcm16(const BYTE* src, UINT32 frames, const WAVEFORMATEX* format, 
             return true;
         }
     }
-
     return false;
 }
 
-bool downmixToMono(const std::vector<int16_t>& in, uint16_t channels, std::vector<int16_t>& mono) {
-    if (channels == 0) return false;
-    if (channels == 1) { mono = in; return true; }
+void downmixToMono(const std::vector<int16_t>& in, uint16_t channels, std::vector<int16_t>& mono) {
+    if (channels <= 1) { mono = in; return; }
     const size_t frames = in.size() / channels;
     mono.resize(frames);
     for (size_t f = 0; f < frames; ++f) {
         int64_t sum = 0;
         for (uint16_t c = 0; c < channels; ++c) sum += in[f * channels + c];
-        int64_t avg = sum / channels;
-        if (avg > 32767) avg = 32767;
-        if (avg < -32768) avg = -32768;
-        mono[f] = static_cast<int16_t>(avg);
+        mono[f] = static_cast<int16_t>(sum / channels);
+    }
+}
+
+bool writeHeader(std::ofstream& out, const WavHeader& h) {
+    out.seekp(0, std::ios::beg);
+    out.write(reinterpret_cast<const char*>(&h), sizeof(h));
+    return static_cast<bool>(out);
+}
+
+SOCKET connectTcp(const std::string& host, uint16_t port) {
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    addrinfo* result = nullptr;
+    const std::string portText = std::to_string(port);
+    if (getaddrinfo(host.c_str(), portText.c_str(), &hints, &result) != 0) return INVALID_SOCKET;
+    SOCKET s = INVALID_SOCKET;
+    for (addrinfo* p = result; p; p = p->ai_next) {
+        s = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (s == INVALID_SOCKET) continue;
+        if (connect(s, p->ai_addr, static_cast<int>(p->ai_addrlen)) == 0) break;
+        closesocket(s);
+        s = INVALID_SOCKET;
+    }
+    freeaddrinfo(result);
+    return s;
+}
+
+bool sendAll(SOCKET s, const BYTE* data, size_t bytes) {
+    while (bytes) {
+        int n = send(s, reinterpret_cast<const char*>(data), static_cast<int>(std::min<size_t>(bytes, 1 << 20)), 0);
+        if (n <= 0) return false;
+        data += n;
+        bytes -= static_cast<size_t>(n);
     }
     return true;
 }
 
-void printUsage() {
-    std::cout << "3V0L Audio Bridge prototype\n\n"
-              << "Usage:\n"
-              << "  3v0l-listener.exe <PID> [seconds] [output.wav]\n\n"
+void usage() {
+    std::cout << "3V0L listener\n\n"
+              << "WAV only:       3v0l-listener.exe <PID> [seconds] [output.wav]\n"
+              << "Live to PC3:    3v0l-listener.exe <PID> 0 [output.wav] <PC3_IP> [audioPort]\n\n"
               << "Example:\n"
-              << "  3v0l-listener.exe 12345 10 discord-test.wav\n";
+              << "  3v0l-listener.exe 12345 0 capture.wav 192.168.11.113 38472\n";
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        printUsage();
-        return 2;
-    }
-
-    const DWORD targetPid = static_cast<DWORD>(parseUint(argv[1], 0));
+    if (argc < 2) { usage(); return 2; }
+    const DWORD pid = static_cast<DWORD>(parseUint(argv[1], 0));
     const uint32_t seconds = parseUint(argc > 2 ? argv[2] : nullptr, 10);
     const std::string output = argc > 3 ? argv[3] : "discord-test.wav";
+    const std::string remoteHost = argc > 4 ? argv[4] : "";
+    const uint16_t remotePort = static_cast<uint16_t>(parseUint(argc > 5 ? argv[5] : nullptr, 38472));
+    const bool streamMode = !remoteHost.empty();
+    if (!pid || (argc > 2 && seconds == 0 && !streamMode)) { std::cerr << "Invalid arguments.\n"; return 2; }
 
-    if (!targetPid || !seconds) {
-        std::cerr << "Invalid PID or duration.\n";
-        return 2;
-    }
+    WSADATA wsa{};
+    if (streamMode && WSAStartup(MAKEWORD(2,2), &wsa) != 0) { std::cerr << "WSAStartup failed.\n"; return 1; }
 
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    if (FAILED(hr)) {
-        std::cerr << "CoInitializeEx failed: 0x" << std::hex << hr << std::dec << "\n";
-        return 1;
-    }
-
+    if (FAILED(hr)) { if (streamMode) WSACleanup(); std::cerr << "CoInitializeEx failed.\n"; return 1; }
     HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Audio", nullptr);
-    if (!mmcss) std::cerr << "Warning: could not register MMCSS Audio task.\n";
 
     AUDIOCLIENT_ACTIVATION_PARAMS params{};
     params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
-    params.ProcessLoopbackParams.TargetProcessId = targetPid;
+    params.ProcessLoopbackParams.TargetProcessId = pid;
     params.ProcessLoopbackParams.ProcessLoopbackMode = PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
-
     ComPtr<ActivationHandler> handler = Microsoft::WRL::Make<ActivationHandler>();
     IActivateAudioInterfaceAsyncOperation* asyncOp = nullptr;
-
-    hr = ActivateAudioInterfaceAsync(
-        VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
-        __uuidof(IAudioClient),
-        &params,
-        handler.Get(),
-        &asyncOp
-    );
-
-    if (FAILED(hr)) {
-        std::cerr << "ActivateAudioInterfaceAsync failed: 0x" << std::hex << hr << std::dec << "\n";
-        if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
-        CoUninitialize();
-        return 1;
-    }
-
+    hr = ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, __uuidof(IAudioClient), &params, handler.Get(), &asyncOp);
+    if (FAILED(hr)) { std::cerr << "ActivateAudioInterfaceAsync failed: 0x" << std::hex << hr << std::dec << "\n"; CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
     asyncOp->Release();
+    if (WaitForSingleObject(handler->event(), 5000) != WAIT_OBJECT_0 || FAILED(handler->resultHr())) { std::cerr << "Audio activation failed.\n"; CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
 
-    WaitForSingleObject(handler->event(), 5000);
-    hr = handler->resultHr();
-    if (FAILED(hr)) {
-        std::cerr << "Audio activation failed: 0x" << std::hex << hr << std::dec << "\n";
-        if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
-        CoUninitialize();
-        return 1;
-    }
+    ComPtr<IAudioClient> client;
+    hr = handler->activated().As(&client);
+    if (FAILED(hr)) { std::cerr << "Could not get IAudioClient.\n"; CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
+    WAVEFORMATEX* mix = nullptr;
+    hr = client->GetMixFormat(&mix);
+    if (FAILED(hr) || !mix) { std::cerr << "GetMixFormat failed.\n"; CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
+    std::cout << "PID " << pid << " -> " << mix->nSamplesPerSec << " Hz, " << mix->nChannels << " ch\n";
 
-    ComPtr<IUnknown> activated = handler->activated();
-    ComPtr<IAudioClient> audioClient;
-    hr = activated.As(&audioClient);
-    if (FAILED(hr)) {
-        std::cerr << "Could not obtain IAudioClient: 0x" << std::hex << hr << std::dec << "\n";
-        if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
-        CoUninitialize();
-        return 1;
-    }
-
-    WAVEFORMATEX* mixFormat = nullptr;
-    hr = audioClient->GetMixFormat(&mixFormat);
-    if (FAILED(hr) || !mixFormat) {
-        std::cerr << "GetMixFormat failed: 0x" << std::hex << hr << std::dec << "\n";
-        if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
-        CoUninitialize();
-        return 1;
-    }
-
-    std::cout << "Captured process PID: " << targetPid << "\n"
-              << "Source format: " << mixFormat->nSamplesPerSec << " Hz, "
-              << mixFormat->nChannels << " ch, " << mixFormat->wBitsPerSample << " bit\n";
-
-    REFERENCE_TIME bufferDuration = 1000000; // 100 ms
-    hr = audioClient->Initialize(
-        AUDCLNT_SHAREMODE_SHARED,
-        AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
-        bufferDuration,
-        0,
-        mixFormat,
-        nullptr
-    );
-    if (FAILED(hr)) {
-        std::cerr << "IAudioClient::Initialize failed: 0x" << std::hex << hr << std::dec << "\n";
-        CoTaskMemFree(mixFormat);
-        if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
-        CoUninitialize();
-        return 1;
-    }
-
+    hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, 1000000, 0, mix, nullptr);
+    if (FAILED(hr)) { std::cerr << "Audio Initialize failed: 0x" << std::hex << hr << std::dec << "\n"; CoTaskMemFree(mix); CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
     ComPtr<IAudioCaptureClient> capture;
-    hr = audioClient->GetService(IID_PPV_ARGS(&capture));
-    if (FAILED(hr)) {
-        std::cerr << "GetService(IAudioCaptureClient) failed: 0x" << std::hex << hr << std::dec << "\n";
-        CoTaskMemFree(mixFormat);
-        if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
-        CoUninitialize();
-        return 1;
-    }
+    hr = client->GetService(IID_PPV_ARGS(&capture));
+    if (FAILED(hr)) { std::cerr << "GetService failed.\n"; CoTaskMemFree(mix); CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
 
+    std::ofstream wav(output, std::ios::binary | std::ios::trunc);
     WavHeader header;
     header.channels = 1;
-    header.sampleRate = mixFormat->nSamplesPerSec;
+    header.sampleRate = mix->nSamplesPerSec;
     header.byteRate = header.sampleRate * 2;
-    header.blockAlign = 2;
+    if (wav) writeHeader(wav, header);
 
-    std::ofstream out(output, std::ios::binary | std::ios::trunc);
-    if (!out) {
-        std::cerr << "Cannot open output file: " << output << "\n";
-        CoTaskMemFree(mixFormat);
-        if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
-        CoUninitialize();
-        return 1;
-    }
-    writeHeader(out, header);
-
-    hr = audioClient->Start();
-    if (FAILED(hr)) {
-        std::cerr << "Start failed: 0x" << std::hex << hr << std::dec << "\n";
-        CoTaskMemFree(mixFormat);
-        if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
-        CoUninitialize();
-        return 1;
+    SOCKET sock = INVALID_SOCKET;
+    if (streamMode) {
+        sock = connectTcp(remoteHost, remotePort);
+        if (sock == INVALID_SOCKET) std::cerr << "Warning: could not connect to PC3 at " << remoteHost << ":" << remotePort << ". WAV capture will continue.\n";
+        else std::cout << "Streaming PCM to " << remoteHost << ":" << remotePort << "\n";
     }
 
-    std::cout << "Recording " << seconds << " seconds to " << output << "...\n";
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
-    uint32_t writtenBytes = 0;
-    std::vector<int16_t> pcm;
-    std::vector<int16_t> mono;
+    hr = client->Start();
+    if (FAILED(hr)) { std::cerr << "Start failed.\n"; if (sock != INVALID_SOCKET) closesocket(sock); if (wav) wav.close(); CoTaskMemFree(mix); CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
 
-    while (std::chrono::steady_clock::now() < deadline) {
-        UINT32 packetLength = 0;
-        hr = capture->GetNextPacketSize(&packetLength);
+    std::cout << (streamMode && seconds == 0 ? "Streaming until interrupted...\n" : "Capturing...\n");
+    const auto deadline = seconds ? std::chrono::steady_clock::now() + std::chrono::seconds(seconds) : std::chrono::steady_clock::time_point::max();
+    uint64_t writtenBytes = 0;
+    std::vector<int16_t> pcm, mono;
+    bool connected = sock != INVALID_SOCKET;
+
+    while (std::chrono::steady_clock::now() < deadline || seconds == 0) {
+        UINT32 packet = 0;
+        hr = capture->GetNextPacketSize(&packet);
         if (FAILED(hr)) break;
-
-        if (!packetLength) {
-            Sleep(5);
-            continue;
-        }
-
-        while (packetLength) {
-            BYTE* data = nullptr;
-            UINT32 numFrames = 0;
-            DWORD flags = 0;
-            hr = capture->GetBuffer(&data, &numFrames, &flags, nullptr, nullptr);
+        if (!packet) { Sleep(5); continue; }
+        while (packet) {
+            BYTE* data = nullptr; UINT32 frames = 0; DWORD flags = 0;
+            hr = capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr);
             if (FAILED(hr)) break;
-
-            if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
-                mono.assign(numFrames, 0);
-            } else if (!convertToPcm16(data, numFrames, mixFormat, pcm) || !downmixToMono(pcm, mixFormat->nChannels, mono)) {
-                std::cerr << "Unsupported capture format.\n";
-                capture->ReleaseBuffer(numFrames);
-                audioClient->Stop();
-                out.close();
-                CoTaskMemFree(mixFormat);
-                if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
-                CoUninitialize();
-                return 1;
-            }
-
-            out.write(reinterpret_cast<const char*>(mono.data()), static_cast<std::streamsize>(mono.size() * sizeof(int16_t)));
-            writtenBytes += static_cast<uint32_t>(mono.size() * sizeof(int16_t));
-            capture->ReleaseBuffer(numFrames);
-
-            hr = capture->GetNextPacketSize(&packetLength);
+            if (flags & AUDCLNT_BUFFERFLAGS_SILENT) mono.assign(frames, 0);
+            else if (!convertToPcm16(data, frames, mix, pcm)) { std::cerr << "Unsupported audio format.\n"; capture->ReleaseBuffer(frames); client->Stop(); if (sock != INVALID_SOCKET) closesocket(sock); if (wav) wav.close(); CoTaskMemFree(mix); CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
+            if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT)) downmixToMono(pcm, mix->nChannels, mono);
+            const BYTE* bytes = reinterpret_cast<const BYTE*>(mono.data());
+            const size_t byteCount = mono.size() * sizeof(int16_t);
+            if (wav) { wav.write(reinterpret_cast<const char*>(bytes), static_cast<std::streamsize>(byteCount)); writtenBytes += byteCount; }
+            if (connected && !sendAll(sock, bytes, byteCount)) { std::cerr << "PC3 connection lost.\n"; closesocket(sock); sock = INVALID_SOCKET; connected = false; }
+            capture->ReleaseBuffer(frames);
+            hr = capture->GetNextPacketSize(&packet);
             if (FAILED(hr)) break;
         }
     }
 
-    audioClient->Stop();
-
-    header.dataSize = writtenBytes;
-    header.fileSize = static_cast<uint32_t>(sizeof(WavHeader) - 8 + writtenBytes);
-    writeHeader(out, header);
-    out.close();
-
-    std::cout << "Done. Wrote " << writtenBytes << " bytes.\n";
-
-    CoTaskMemFree(mixFormat);
+    client->Stop();
+    if (wav) { header.dataSize = static_cast<uint32_t>(std::min<uint64_t>(writtenBytes, 0xffffffffULL)); header.fileSize = sizeof(WavHeader) - 8 + header.dataSize; writeHeader(wav, header); wav.close(); }
+    if (sock != INVALID_SOCKET) closesocket(sock);
+    CoTaskMemFree(mix);
     if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
     CoUninitialize();
+    if (streamMode) WSACleanup();
+    std::cout << "Done. WAV bytes: " << writtenBytes << "\n";
     return 0;
 }
