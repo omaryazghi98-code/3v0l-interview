@@ -4,6 +4,12 @@
   const click=s=>document.querySelector(s)?.click();
   const key=(code,keyValue=code)=>document.dispatchEvent(new KeyboardEvent('keydown',{code,key:keyValue,bubbles:true,cancelable:true}));
   const jump=route=>{
+    const picker=document.getElementById('globalJump');
+    if(picker){
+      picker.value=route;
+      picker.dispatchEvent(new Event('change',{bubbles:true}));
+      return;
+    }
     if(route==='index'){
       const home=document.querySelector('[data-action="home"],[data-route="index"]');
       if(home){home.click();return;}
