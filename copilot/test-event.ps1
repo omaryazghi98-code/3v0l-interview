@@ -1,0 +1,2 @@
+$payload = @{ speaker='interviewer'; transcript="Parlez-moi d'une situation difficile avec un client."; final=$true; context=@(@{id='epic-wrong-account';title='Epic — achat sur le mauvais compte';company='5CA Epic Games';tags=@('epic','gaming','account')}) } | ConvertTo-Json -Depth 5
+Invoke-RestMethod -Uri 'http://127.0.0.1:38471/event' -Method Post -ContentType 'application/json' -Body $payload | ConvertTo-Json -Depth 10
