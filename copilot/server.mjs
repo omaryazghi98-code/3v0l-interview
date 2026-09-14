@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {networkInterfaces} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {dirname,join} from 'node:path';
-import {startSttServer,sttStatus,setTranscriptHandler} from './stt.mjs';
+import {startSttServer,sttStatus,setTranscriptHandler,setSttProviderEnabled,sttProviderControls} from './stt.mjs';
 
 globalThis.window=globalThis;
 try { await import('../data/content.js'); } catch (err) { console.error('Could not load interview data:',err.message); }
@@ -16,6 +16,7 @@ const REQUESTY_KEY=process.env.REQUESTY_API_KEY||'';
 const REMOTE_PIN=process.env.REMOTE_PIN||'3060';
 const ANSWER_LANGUAGE=process.env.ANSWER_LANGUAGE||'fr';
 const AUDIO_ENABLED=process.env.AUDIO_ENABLED!=='0';
+let requestyEnabled = true;
 const commands=[];let commandSeq=0;
 let state={connectedAt:new Date().toISOString(),lastEventAt:null,speaker:null,transcript:'',final:false,intent:'idle',direction:[],sayThis:'',bestReference:null,confidence:0,provider:'none',error:null};
 const json=(res,status,payload)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','access-control-allow-origin':'*','cache-control':'no-store'});res.end(JSON.stringify(payload));};
@@ -29,7 +30,7 @@ function tokenize(s){return String(s||'').toLowerCase().normalize('NFD').replace
 function relevantRefs(text){const words=tokenize(text);return allRefs.map(x=>{const hay=tokenize([x.title,x.text,x.company,...(x.tags||[]),...(x.phrases||[])].join(' '));const set=new Set(hay);const hits=words.reduce((n,w)=>n+(set.has(w)?1:0),0);return {x,hits};}).filter(x=>x.hits>0).sort((a,b)=>b.hits-a.hits).slice(0,6).map(({x})=>({id:x.id,title:x.title,company:x.company||'',tags:(x.tags||[]).slice(0,8),text:x.text||'',phrases:x.phrases||[]}));}
 function heuristic(text,context=[]){const t=text.toLowerCase();const rules=[{terms:['frustr','angry','énerv','insult','agress'],ref:'angry-player',intent:'difficult_customer',dir:['Reconnaître la frustration','Ne pas prendre l’agressivité personnellement','Reformuler le problème','Vérifier avant de promettre une solution']},{terms:['v-buck','vbucks','fortnite','wrong account','mauvais compte','achat'],ref:'epic-wrong-account',intent:'gaming_account',dir:['Vérifier le compte et la transaction','Identifier la plateforme','Ne pas promettre de remboursement avant vérification']},{terms:['student','étudiant','spotify'],ref:'spotify-student',intent:'account_verification',dir:['Identifier le bon compte','Vérifier la situation','Expliquer la résolution sans improviser']},{terms:['transfer','transfert','argent','mother','mère','recipient','destinataire'],ref:'call-taptap-not-received',intent:'transfer_support',dir:['Vérifier le statut du transfert','Confirmer les informations nécessaires','Donner une prochaine étape claire','Ne pas inventer de délai']},{terms:['phone','téléphone','call','appel','channel','canal'],ref:'channels-fr',intent:'support_channels',dir:['Donner un exemple concret','Montrer ton expérience multi-canaux']}];let best={score:0};for(const r of rules){const score=r.terms.reduce((n,w)=>n+(t.includes(w)?1:0),0);if(score>best.score)best={score,...r};}const contextHit=context.find(x=>best.ref===x.id)||null;if(!best.score)return {intent:'unknown',direction:['Écouter la question jusqu’au bout','Identifier le sujet principal','Répondre avec un exemple réel','Demander une précision si nécessaire'],bestReference:context[0]?.id||null,confidence:.25,sayThis:''};return {intent:best.intent,direction:best.dir,bestReference:contextHit?.id||best.ref,confidence:Math.min(.96,.45+best.score*.15),sayThis:''};}
 async function callRequesty(body){
-  if(!REQUESTY_KEY)return null;
+  if(!requestyEnabled || !REQUESTY_KEY)return null;
   const referenceText=(body.context||[]).map(x=>`[${x.id}] ${x.title}\n${x.text||x.phrases?.join(' ')||''}`).join('\n\n');
   const lang=ANSWER_LANGUAGE==='en'?'English':'French';
   const payload={
@@ -40,30 +41,11 @@ async function callRequesty(body){
     ],
     temperature:.12,
     max_tokens:450,
-    response_format:{
-      type:'json_schema',
-      json_schema:{
-        name:'interview_response',
-        strict:true,
-        schema:{
-          type:'object',
-          additionalProperties:false,
-          properties:{
-            intent:{type:'string'},
-            direction:{type:'array',items:{type:'string'}},
-            say_this:{type:'string'},
-            best_reference:{type:['string','null']},
-            confidence:{type:'number',minimum:0,maximum:1}
-          },
-          required:['intent','direction','say_this','best_reference','confidence']
-        }
-      }
-    }
+    response_format:{type:'json_schema',json_schema:{name:'interview_response',strict:true,schema:{type:'object',additionalProperties:false,properties:{intent:{type:'string'},direction:{type:'array',items:{type:'string'}},say_this:{type:'string'},best_reference:{type:['string','null']},confidence:{type:'number',minimum:0,maximum:1}},required:['intent','direction','say_this','best_reference','confidence']}}}
   };
   const resp=await fetch(REQUESTY_URL,{method:'POST',headers:{authorization:`Bearer ${REQUESTY_KEY}`,'content-type':'application/json','HTTP-Referer':'http://3v0l.local','X-Title':'3V0L Interview Copilot'},body:JSON.stringify(payload)});
   if(!resp.ok)throw new Error(`Requesty ${resp.status}: ${await resp.text()}`);
-  const data=await resp.json();
-  const text=String(data?.choices?.[0]?.message?.content||'').trim();
+  const data=await resp.json();const text=String(data?.choices?.[0]?.message?.content||'').trim();
   try{return JSON.parse(text);}catch{}
   const cleaned=text.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
   try{return JSON.parse(cleaned);}catch{}
@@ -71,13 +53,15 @@ async function callRequesty(body){
   if(start>=0&&end>start){try{return JSON.parse(cleaned.slice(start,end+1));}catch{}}
   throw new Error('Requesty returned unusable structured output');
 }
-async function handleEvent(payload){const transcript=String(payload.transcript||payload.text||'').trim();if(!transcript)return state;const context=Array.isArray(payload.context)&&payload.context.length?payload.context.slice(0,8):relevantRefs(transcript);const base=heuristic(transcript,context);let ai=null;if(payload.final!==false){try{ai=await callRequesty({transcript,speaker:payload.speaker||'interviewer',context});}catch(err){state.error=String(err.message||err);}}const merged=ai||base;state={...state,lastEventAt:new Date().toISOString(),speaker:payload.speaker||'interviewer',transcript,final:payload.final!==false,intent:merged.intent||base.intent,direction:Array.isArray(merged.direction)?merged.direction:base.direction,sayThis:String(merged.say_this||base.sayThis||''),bestReference:merged.best_reference??base.bestReference,confidence:Number.isFinite(+merged.confidence)?+merged.confidence:base.confidence,provider:ai?'requesty':(payload.provider||'local'),error:state.error||null};return state;}
+async function handleEvent(payload){const transcript=String(payload.transcript||payload.text||'').trim();if(!transcript)return state;const context=Array.isArray(payload.context)&&payload.context.length?payload.context.slice(0,8):relevantRefs(transcript);const base=heuristic(transcript,context);let ai=null;if(payload.final!==false&&requestyEnabled){try{ai=await callRequesty({transcript,speaker:payload.speaker||'interviewer',context});}catch(err){state.error=String(err.message||err);}}const merged=ai||base;state={...state,lastEventAt:new Date().toISOString(),speaker:payload.speaker||'interviewer',transcript,final:payload.final!==false,intent:merged.intent||base.intent,direction:Array.isArray(merged.direction)?merged.direction:base.direction,sayThis:String(merged.say_this||base.sayThis||''),bestReference:merged.best_reference??base.bestReference,confidence:Number.isFinite(+merged.confidence)?+merged.confidence:base.confidence,provider:ai?'requesty':(payload.provider||'local'),error:state.error||null};return state;}
 setTranscriptHandler(handleEvent);
 if(AUDIO_ENABLED){try{startSttServer();}catch(err){console.error('STT server failed:',err.message);}}
 async function serveFile(path,type,res){try{const body=await readFile(join(dirname(fileURLToPath(import.meta.url)),path));res.writeHead(200,{'content-type':type,'cache-control':'no-store'});res.end(body);}catch{return json(res,404,{error:'not found'});}}
 const server=http.createServer(async(req,res)=>{try{const url=new URL(req.url,`http://${req.headers.host||'localhost'}`);if(req.method==='OPTIONS'){res.writeHead(204,{'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type'});return res.end();}
-if(url.pathname==='/health'&&req.method==='GET')return json(res,200,{ok:true,model:MODEL,requestyConfigured:!!REQUESTY_KEY,stt:sttStatus(),remoteConfigured:true,state});
-if(url.pathname==='/state'&&req.method==='GET')return json(res,200,{...state,stt:sttStatus()});
+if(url.pathname==='/health'&&req.method==='GET')return json(res,200,{ok:true,model:MODEL,requestyConfigured:!!REQUESTY_KEY,requestyEnabled,stt:sttStatus(),remoteConfigured:true,state});
+if(url.pathname==='/state'&&req.method==='GET')return json(res,200,{...state,stt:sttStatus(),apis:{requesty:requestyEnabled,...sttProviderControls()}});
+if(url.pathname==='/config'&&req.method==='GET')return json(res,200,{requesty:requestyEnabled,...sttProviderControls(),requestyConfigured:!!REQUESTY_KEY,deepgramConfigured:!!process.env.DEEPGRAM_API_KEY,azureConfigured:!!process.env.AZURE_SPEECH_KEY,sttProvider:sttStatus().provider});
+if(url.pathname==='/config'&&req.method==='POST'){const body=await parseBody(req);if(typeof body.requesty==='boolean')requestyEnabled=body.requesty;if(typeof body.deepgram==='boolean')setSttProviderEnabled('deepgram',body.deepgram);if(typeof body.azure==='boolean')setSttProviderEnabled('azure',body.azure);return json(res,200,{requesty:requestyEnabled,...sttProviderControls(),requestyConfigured:!!REQUESTY_KEY,deepgramConfigured:!!process.env.DEEPGRAM_API_KEY,azureConfigured:!!process.env.AZURE_SPEECH_KEY,sttProvider:sttStatus().provider});}
 if(url.pathname==='/event'&&req.method==='POST')return json(res,200,await handleEvent(await parseBody(req)));
 if(url.pathname==='/clear'&&req.method==='POST'){state={...state,lastEventAt:null,speaker:null,transcript:'',final:false,intent:'idle',direction:[],sayThis:'',bestReference:null,confidence:0,provider:'none',error:null};return json(res,200,state);}
 if((url.pathname==='/remote'||url.pathname==='/remote.html')&&req.method==='GET')return serveFile('remote.html','text/html; charset=utf-8',res);
