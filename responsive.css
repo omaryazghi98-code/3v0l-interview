@@ -1,0 +1,56 @@
+/* Responsive command-center overrides */
+@media (max-width: 1000px){
+  .topbar{padding:0 12px;gap:10px}
+  .brand-muted{display:none}
+  .top-actions{min-width:0;overflow-x:auto;scrollbar-width:none;justify-content:flex-end}
+  .top-actions::-webkit-scrollbar{display:none}
+  .status-pill{display:none}
+  .global-picker{max-width:180px}
+  .view{padding:18px 16px 24px}
+  .index-grid{grid-template-columns:repeat(2,1fr)}
+  .index-card.featured{grid-column:span 2}
+  .index-tools{grid-template-columns:1fr}
+  .live-layout{grid-template-columns:200px 1fr}
+  .call-layout{grid-template-columns:230px 1fr}
+}
+@media (max-width: 720px){
+  .app{grid-template-rows:56px 1fr 38px}
+  .topbar{padding:0 9px;position:sticky;top:0}
+  .brand{gap:6px}
+  .brand-word{font-size:16px}
+  .brand-mark{width:28px;height:28px}
+  .top-actions{gap:4px;flex:1}
+  .icon-btn{padding:7px 8px;flex:0 0 auto}
+  .global-picker{width:145px;min-width:145px;font-size:11px}
+  .view{padding:14px 10px 20px}
+  .index-hero{display:block;padding:10px 0 20px}
+  .index-hero h1{font-size:40px}
+  .index-hero .primary-btn{margin-top:16px;width:100%}
+  .index-grid{grid-template-columns:1fr}
+  .index-card.featured{grid-column:auto}
+  .index-card{min-height:128px}
+  .live-layout,.call-layout{grid-template-columns:1fr}
+  .live-sidebar,.call-list{max-height:none}
+  .live-sidebar{order:2}
+  .reader-shell,.call-main{min-height:0}
+  .reader-head,.call-main-head,.back-row,.page-title,.search-head{align-items:flex-start;flex-direction:column}
+  .reader-controls,.call-nav-actions{width:100%}
+  .reader-controls .mini-btn{flex:1}
+  .live-next{grid-template-columns:1fr 1fr}
+  .live-next .next-big{grid-column:span 2;grid-row:1}
+  .call-footer{flex-direction:column}
+  .panic-grid{grid-template-columns:1fr}
+  .kb-grid{grid-template-columns:1fr}
+  .search-box input{font-size:16px}
+}
+@media (max-width: 430px){
+  .global-picker{width:118px;min-width:118px}
+  .top-actions .icon-btn[data-action="font-down"],.top-actions .icon-btn[data-action="font-up"]{display:none}
+  .index-hero h1{font-size:34px}
+  .eyebrow{font-size:9px}
+}
+/* Picker must remain interactive above sticky/scrolling content */
+.global-picker{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:9px;padding:7px 9px;cursor:pointer;outline:none;z-index:5}
+.global-picker:focus{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 14%,transparent)}
+.topbar{overflow:visible}
+.top-actions{overflow:visible}
