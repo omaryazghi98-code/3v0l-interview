@@ -19,7 +19,9 @@
     document.getElementById('view')?.appendChild(b);b.click();b.remove();
   };
   const run=cmd=>{
-    const a=cmd.action;
+    let a=String(cmd.action||'');
+    let value=cmd.value??null;
+    if(a.startsWith('jump:')){value=a.slice(5);a='jump';}
     if(a==='next-live'){
       const b=document.querySelector('[data-action="next-live"]');
       if(b)b.click(); else key('Space',' ');
@@ -40,7 +42,7 @@
     if(a==='font-down')return click('[data-action="font-down"]');
     if(a==='theme')return click('[data-action="theme"]');
     if(a==='panic')return jump('panic');
-    if(a==='jump'&&cmd.value)return jump(cmd.value);
+    if(a==='jump'&&value)return jump(String(value));
     if(a==='search')return click('[data-action="search"]');
     if(a==='toggle-copilot')return document.querySelector('[data-cp="toggle"]')?.click();
     if(a==='clear')return document.querySelector('[data-cp="clear"]')?.click();
