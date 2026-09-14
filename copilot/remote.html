@@ -1,43 +1,27 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="3V0L Remote"><meta name="theme-color" content="#080b10"><link rel="manifest" href="/remote.webmanifest">
 <title>3V0L Remote</title>
 <style>
-:root{color-scheme:dark;--bg:#080b10;--panel:#111720;--line:#2a3340;--text:#f5f7fa;--muted:#8d98a7;--accent:#b8ff5a;--danger:#ff6875}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}body{margin:0;background:radial-gradient(circle at top,#151c27 0,#080b10 52%);color:var(--text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh;padding:env(safe-area-inset-top) 14px env(safe-area-inset-bottom)}
-main{max-width:560px;margin:0 auto;padding:14px 0 24px}.head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px}.brand{font-weight:950;letter-spacing:.08em}.status{font-size:11px;color:var(--muted);border:1px solid var(--line);padding:7px 9px;border-radius:999px}.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--danger);margin-right:6px}.dot.on{background:var(--accent)}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.btn{appearance:none;border:1px solid var(--line);background:linear-gradient(145deg,#151c26,#10151d);color:var(--text);border-radius:16px;min-height:72px;font-size:18px;font-weight:800;padding:12px;box-shadow:0 10px 28px rgba(0,0,0,.22)}.btn:active{transform:scale(.98);border-color:var(--accent)}.btn.accent{background:var(--accent);color:#111;border-color:var(--accent)}.btn.danger{border-color:#5b2830}.wide{grid-column:1/-1}.label{display:block;font-size:10px;letter-spacing:.12em;color:var(--muted);text-transform:uppercase;margin:18px 2px 7px}.row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.row .btn{min-height:58px;font-size:15px}.select{width:100%;background:#111720;color:var(--text);border:1px solid var(--line);border-radius:14px;padding:13px;font-size:15px}#msg{margin-top:12px;color:var(--muted);font-size:12px;text-align:center;min-height:18px}.pin{display:flex;gap:8px}.pin input{flex:1;min-width:0;background:#111720;color:var(--text);border:1px solid var(--line);border-radius:12px;padding:13px;font-size:18px;text-align:center;letter-spacing:.25em}.pin button{width:90px}
+:root{color-scheme:dark;--bg:#080b10;--panel:#111720;--line:#2a3340;--text:#f5f7fa;--muted:#8d98a7;--accent:#b8ff5a;--danger:#ff6875}*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}body{margin:0;background:radial-gradient(circle at top,#151c27 0,#080b10 52%);color:var(--text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh;padding:env(safe-area-inset-top) 14px env(safe-area-inset-bottom)}main{max-width:560px;margin:0 auto;padding:14px 0 28px}.head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px}.brand{font-weight:950;letter-spacing:.08em}.status{font-size:11px;color:var(--muted);border:1px solid var(--line);padding:7px 9px;border-radius:999px}.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--danger);margin-right:6px}.dot.on{background:var(--accent)}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.btn{appearance:none;border:1px solid var(--line);background:linear-gradient(145deg,#151c26,#10151d);color:var(--text);border-radius:16px;min-height:72px;font-size:18px;font-weight:800;padding:12px;box-shadow:0 10px 28px rgba(0,0,0,.22)}.btn:active{transform:scale(.98);border-color:var(--accent)}.btn.accent{background:var(--accent);color:#111;border-color:var(--accent)}.wide{grid-column:1/-1}.label{display:block;font-size:10px;letter-spacing:.12em;color:var(--muted);text-transform:uppercase;margin:18px 2px 7px}.row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.row .btn{min-height:58px;font-size:15px}.select{width:100%;background:#111720;color:var(--text);border:1px solid var(--line);border-radius:14px;padding:13px;font-size:15px}.pin{display:flex;gap:8px}.pin input{flex:1;min-width:0;background:#111720;color:var(--text);border:1px solid var(--line);border-radius:12px;padding:13px;font-size:18px;text-align:center;letter-spacing:.25em}.pin button{width:90px}.airow{display:grid;grid-template-columns:1fr 1fr;gap:8px}.airow .btn{min-height:58px;font-size:15px}.telemetry{margin-top:12px;border:1px solid var(--line);background:#0e141c;border-radius:14px;padding:11px;color:var(--muted);font-size:11px;line-height:1.5;min-height:42px}#msg{text-align:center;min-height:18px;margin-top:9px;color:var(--muted);font-size:12px}
 </style>
 </head>
 <body><main>
 <div class="head"><div class="brand">3V0L · REMOTE</div><div class="status"><span id="dot" class="dot"></span><span id="st">OFFLINE</span></div></div>
 <div class="pin"><input id="pin" inputmode="numeric" maxlength="8" placeholder="PIN"><button class="btn" id="pair">PAIR</button></div>
-<div class="label">Interview navigation</div>
-<div class="grid">
-<button class="btn" data-cmd="prev-live">← Previous</button><button class="btn accent" data-cmd="next-live">Next →</button>
-<button class="btn" data-cmd="scroll-up">↑ Scroll</button><button class="btn" data-cmd="scroll-down">↓ Scroll</button>
-<button class="btn" data-cmd="toggle-auto">▶ Auto</button><button class="btn" data-cmd="panic">⚠ Panic</button>
-</div>
-<div class="label">Quick access</div>
-<select class="select" id="jump">
-<option value="index">⌂ Index</option><option value="live">⚡ Live</option><option value="french">🇫🇷 French Answers</option><option value="calls">☎ Phone Call Lab</option><option value="gaming">🎮 Gaming</option><option value="taptap">💸 TapTap Send</option><option value="stories">🧠 Real Stories</option><option value="questions">🎯 Curveballs</option><option value="french-phrases">💬 French Phrases</option><option value="english">🇬🇧 English Backup</option><option value="search">⌕ Search</option><option value="help">⌨ Controls</option>
-</select>
-<div class="label">Call Lab</div>
-<div class="row"><button class="btn" data-cmd="prev-call">‹ Call</button><button class="btn accent" data-cmd="next-call">Call ›</button><button class="btn" data-cmd="call-next-step">Next step</button></div>
-<div class="label">Display</div>
-<div class="row"><button class="btn" data-cmd="font-down">A−</button><button class="btn" data-cmd="font-up">A+</button><button class="btn" data-cmd="theme">☼ Theme</button></div>
-<div id="msg"></div>
+<div class="label">Interview navigation</div><div class="grid"><button class="btn" data-cmd="prev-live">← Previous</button><button class="btn accent" data-cmd="next-live">Next →</button><button class="btn" data-cmd="scroll-up">↑ Scroll</button><button class="btn" data-cmd="scroll-down">↓ Scroll</button><button class="btn" data-cmd="toggle-auto">▶ Auto</button><button class="btn" data-cmd="panic">⚠ Panic</button></div>
+<div class="label">Quick access</div><select class="select" id="jump"><option value="index">⌂ Index</option><option value="live">⚡ Live</option><option value="french">🇫🇷 French Answers</option><option value="calls">☎ Phone Call Lab</option><option value="gaming">🎮 Gaming</option><option value="taptap">💸 TapTap Send</option><option value="stories">🧠 Real Stories</option><option value="questions">🎯 Curveballs</option><option value="french-phrases">💬 French Phrases</option><option value="english">🇬🇧 English Backup</option><option value="search">⌕ Search</option><option value="help">⌨ Controls</option></select>
+<div class="label">Call Lab</div><div class="row"><button class="btn" data-cmd="prev-call">‹ Call</button><button class="btn accent" data-cmd="next-call">Call ›</button><button class="btn" data-cmd="call-next-step">Next step</button></div>
+<div class="label">AI Copilot</div><div class="airow"><button class="btn" data-cmd="toggle-copilot">◇ Show / Hide AI</button><button class="btn" data-cmd="clear">Clear AI</button></div>
+<div class="label">Display</div><div class="row"><button class="btn" data-cmd="font-down">A−</button><button class="btn" data-cmd="font-up">A+</button><button class="btn" data-cmd="theme">☼ Theme</button></div>
+<div class="telemetry" id="telemetry">Waiting for command-center status…</div><div id="msg"></div>
 </main>
 <script>
-const pinEl=document.getElementById('pin'),msg=document.getElementById('msg'),st=document.getElementById('st'),dot=document.getElementById('dot'),jump=document.getElementById('jump');
-let pin=localStorage.getItem('3v0l-remote-pin')||'';
-if(pin)pinEl.value=pin;
-const base=location.origin;
-async function api(path,body={}){const r=await fetch(base+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...body,pin})});if(!r.ok)throw new Error(await r.text());return r.json()}
-async function send(cmd){try{await api('/remote/action',{action:cmd});msg.textContent='✓ '+cmd.replaceAll('-',' ');setTimeout(()=>msg.textContent='',700)}catch(e){msg.textContent='✕ '+(e.message||'Remote error')}}
-document.querySelectorAll('[data-cmd]').forEach(b=>b.addEventListener('click',()=>send(b.dataset.cmd)));
-document.getElementById('pair').addEventListener('click',()=>{pin=pinEl.value.trim();localStorage.setItem('3v0l-remote-pin',pin);send('ping')});
-jump.addEventListener('change',()=>send('jump:'+jump.value));
-async function poll(){try{const r=await fetch(base+'/state',{cache:'no-store'});const s=await r.json();st.textContent='RELAY ONLINE';dot.classList.add('on')}catch{st.textContent='OFFLINE';dot.classList.remove('on')}}setInterval(poll,3000);poll();
-</script>
-</body></html>
+const pinEl=document.getElementById('pin'),msg=document.getElementById('msg'),st=document.getElementById('st'),dot=document.getElementById('dot'),jump=document.getElementById('jump'),telemetry=document.getElementById('telemetry');let pin=localStorage.getItem('3v0l-remote-pin')||'';if(pin)pinEl.value=pin;const base=location.origin;
+async function api(path,body={}){const r=await fetch(base+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...body,pin})});if(!r.ok)throw new Error((await r.text())||'Request failed');return r.json()}
+async function send(cmd){try{await api('/remote/action',{action:cmd});msg.textContent='✓ '+cmd.replaceAll('-',' ');setTimeout(()=>msg.textContent='',700)}catch(e){msg.textContent='✕ '+e.message}}
+document.querySelectorAll('[data-cmd]').forEach(b=>b.addEventListener('click',()=>send(b.dataset.cmd)));document.getElementById('pair').addEventListener('click',()=>{pin=pinEl.value.trim();localStorage.setItem('3v0l-remote-pin',pin);send('ping')});jump.addEventListener('change',()=>send('jump:'+jump.value));
+async function poll(){try{const r=await fetch(base+'/state',{cache:'no-store'});const s=await r.json();st.textContent='RELAY ONLINE';dot.classList.add('on');telemetry.textContent=(s.lastEventAt?`Last: ${new Date(s.lastEventAt).toLocaleTimeString()} · ${s.provider||'none'} · ${s.speaker||'—'}`:'Relay ready · waiting for interview audio');}catch{st.textContent='OFFLINE';dot.classList.remove('on');telemetry.textContent='Start the 3V0L relay on the command-center PC.'}}
+setInterval(poll,3000);poll();if('serviceWorker'in navigator)navigator.serviceWorker.register('/remote-sw.js').catch(()=>{});
+</script></body></html>
