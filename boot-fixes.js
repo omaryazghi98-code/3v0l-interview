@@ -1,19 +1,33 @@
 (()=>{
   const root=document.documentElement;
   const sendKey=key=>document.dispatchEvent(new KeyboardEvent('keydown',{key,code:key===' '?'Space':`Key${String(key).toUpperCase()}`,bubbles:true,cancelable:true}));
-  const theme=()=>{const next=root.dataset.theme==='light'?'dark':'light';root.dataset.theme=next;localStorage.setItem('3v0l-theme',next);const b=document.querySelector('[data-action="theme"]');if(b)b.textContent=next==='dark'?'☼':'☾'};
+  const applyTheme=()=>{
+    const saved=localStorage.getItem('3v0l-theme')||'dark';
+    root.dataset.theme=saved;
+    const b=document.querySelector('[data-action="theme"]');
+    if(b)b.textContent=saved==='dark'?'☼':'☾';
+  };
+  const theme=()=>{
+    const next=(root.dataset.theme||localStorage.getItem('3v0l-theme')||'dark')==='light'?'dark':'light';
+    localStorage.setItem('3v0l-theme',next);
+    root.dataset.theme=next;
+    const b=document.querySelector('[data-action="theme"]');
+    if(b)b.textContent=next==='dark'?'☼':'☾';
+  };
   const font=delta=>{const current=parseInt(getComputedStyle(root).getPropertyValue('--reader'))||19;const next=Math.max(16,Math.min(30,current+delta));root.style.setProperty('--reader',next+'px');localStorage.setItem('3v0l-font',next)};
+
+  applyTheme();
   document.querySelector('.brand')?.addEventListener('click',()=>sendKey('h'));
   document.querySelector('[data-route="search"]')?.addEventListener('click',e=>{if(!document.getElementById('view')?.contains(e.currentTarget))sendKey('s')});
   document.querySelector('[data-action="theme"]')?.addEventListener('click',theme);
   document.querySelectorAll('.top-actions [data-action="font-up"]').forEach(b=>b.addEventListener('click',()=>font(1)));
   document.querySelectorAll('.top-actions [data-action="font-down"]').forEach(b=>b.addEventListener('click',()=>font(-1)));
 
-  let raf=0,last=0,lastScroll=0,watching=false;
-  const tele=()=>document.getElementById('teleprompter');
-  const stopReinforced=()=>{if(raf){cancelAnimationFrame(raf);raf=0}watching=false};
+  let raf=0,last=0,watching=false;
+  const autoTarget=()=>document.getElementById('teleprompter')||document.querySelector('.call-steps');
+  const stopReinforced=()=>{if(raf){cancelAnimationFrame(raf);raf=0}watching=false;last=0};
   const reinforced=ts=>{
-    const t=tele();
+    const t=autoTarget();
     if(!watching||!t){stopReinforced();return}
     if(!last)last=ts;
     const dt=Math.min(80,ts-last);last=ts;
@@ -26,18 +40,24 @@
   document.addEventListener('keydown',e=>{
     const typing=['INPUT','TEXTAREA'].includes(document.activeElement?.tagName);
     if(typing)return;
-    if(document.getElementById('teleprompter')){
-      if(e.code==='Space'||e.key===' '){e.preventDefault();document.querySelector('[data-action="next-live"]')?.click();return}
-      if(e.code==='KeyT'||e.key.toLowerCase()==='t'){
-        e.preventDefault();document.querySelector('[data-action="toggle-auto"]')?.click();setTimeout(()=>{
-          const b=document.querySelector('[data-action="toggle-auto"]');
-          if(b&&/Stop|⏸/.test(b.textContent||''))startReinforced();else stopReinforced();
-        },30);return
-      }
+    if(e.code==='Space'||e.key===' '){
+      if(document.getElementById('teleprompter')){e.preventDefault();document.querySelector('[data-action="next-live"]')?.click();return}
+      if(document.querySelector('.call-steps')){e.preventDefault();document.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true,cancelable:true}));return}
+    }
+    if((e.code==='KeyT'||e.key.toLowerCase()==='t') && (document.getElementById('teleprompter')||document.querySelector('.call-steps'))){
+      e.preventDefault();
+      const b=document.querySelector('[data-action="toggle-auto"]');
+      if(b)b.click();
+      setTimeout(()=>{
+        const active=document.querySelector('[data-action="toggle-auto"]');
+        if(active&&/Stop|⏸/.test(active.textContent||''))startReinforced();else stopReinforced();
+      },30);
+      return;
     }
   },true);
 
   const mo=new MutationObserver(()=>{
+    applyTheme();
     const b=document.querySelector('[data-action="toggle-auto"]');
     if(b&&/Stop|⏸/.test(b.textContent||'')){
       if(!watching)startReinforced();
