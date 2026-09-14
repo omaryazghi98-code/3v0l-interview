@@ -7,7 +7,6 @@
     "start:verbose": "node --trace-warnings server.mjs"
   },
   "dependencies": {
-    "@azure/cognitiveservices-speech-sdk": "^1.47.0",
     "microsoft-cognitiveservices-speech-sdk": "^1.47.0",
     "ws": "^8.18.3"
   }
