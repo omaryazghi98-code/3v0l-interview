@@ -28,7 +28,49 @@ const allRefs=[...(D.answers||[]),...(D.stories||[]),...(D.scenarios||[]),...(D.
 function tokenize(s){return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').split(/[^a-z0-9à-ÿœ]+/i).filter(w=>w.length>2);}
 function relevantRefs(text){const words=tokenize(text);return allRefs.map(x=>{const hay=tokenize([x.title,x.text,x.company,...(x.tags||[]),...(x.phrases||[])].join(' '));const set=new Set(hay);const hits=words.reduce((n,w)=>n+(set.has(w)?1:0),0);return {x,hits};}).filter(x=>x.hits>0).sort((a,b)=>b.hits-a.hits).slice(0,6).map(({x})=>({id:x.id,title:x.title,company:x.company||'',tags:(x.tags||[]).slice(0,8),text:x.text||'',phrases:x.phrases||[]}));}
 function heuristic(text,context=[]){const t=text.toLowerCase();const rules=[{terms:['frustr','angry','énerv','insult','agress'],ref:'angry-player',intent:'difficult_customer',dir:['Reconnaître la frustration','Ne pas prendre l’agressivité personnellement','Reformuler le problème','Vérifier avant de promettre une solution']},{terms:['v-buck','vbucks','fortnite','wrong account','mauvais compte','achat'],ref:'epic-wrong-account',intent:'gaming_account',dir:['Vérifier le compte et la transaction','Identifier la plateforme','Ne pas promettre de remboursement avant vérification']},{terms:['student','étudiant','spotify'],ref:'spotify-student',intent:'account_verification',dir:['Identifier le bon compte','Vérifier la situation','Expliquer la résolution sans improviser']},{terms:['transfer','transfert','argent','mother','mère','recipient','destinataire'],ref:'call-taptap-not-received',intent:'transfer_support',dir:['Vérifier le statut du transfert','Confirmer les informations nécessaires','Donner une prochaine étape claire','Ne pas inventer de délai']},{terms:['phone','téléphone','call','appel','channel','canal'],ref:'channels-fr',intent:'support_channels',dir:['Donner un exemple concret','Montrer ton expérience multi-canaux']}];let best={score:0};for(const r of rules){const score=r.terms.reduce((n,w)=>n+(t.includes(w)?1:0),0);if(score>best.score)best={score,...r};}const contextHit=context.find(x=>best.ref===x.id)||null;if(!best.score)return {intent:'unknown',direction:['Écouter la question jusqu’au bout','Identifier le sujet principal','Répondre avec un exemple réel','Demander une précision si nécessaire'],bestReference:context[0]?.id||null,confidence:.25,sayThis:''};return {intent:best.intent,direction:best.dir,bestReference:contextHit?.id||best.ref,confidence:Math.min(.96,.45+best.score*.15),sayThis:''};}
-async function callRequesty(body){if(!REQUESTY_KEY)return null;const referenceText=(body.context||[]).map(x=>`[${x.id}] ${x.title}\n${x.text||x.phrases?.join(' ')||''}`).join('\n\n');const lang=ANSWER_LANGUAGE==='en'?'English':'French';const resp=await fetch(REQUESTY_URL,{method:'POST',headers:{authorization:`Bearer ${REQUESTY_KEY}`,'content-type':'application/json','HTTP-Referer':'http://3v0l.local','X-Title':'3V0L Interview Copilot'},body:JSON.stringify({model:MODEL,messages:[{role:'system',content:`You are the realtime interview assistant for 3V0L. Answer in ${lang} only. Return valid JSON only with keys intent, direction (array of 2-5 short action cues), say_this (a short natural answer Omar can say aloud, maximum 4 sentences), best_reference (one supplied id or null), confidence (0-1). Use ONLY the supplied interview references and Omar's stated experience. Never invent facts, tools, metrics, responsibilities, employers or policies. Prefer a matching reference when one exists.`},{role:'user',content:`Interview question:\n${body.transcript}\n\nProvided interview references:\n${referenceText||'(none)'}\n\nGive the most useful speakable answer.`}],temperature:.12,max_tokens:450})});if(!resp.ok)throw new Error(`Requesty ${resp.status}: ${await resp.text()}`);const data=await resp.json();const text=data?.choices?.[0]?.message?.content||'';try{return JSON.parse(text)}catch{const start=text.indexOf('{'),end=text.lastIndexOf('}');if(start>=0&&end>start)return JSON.parse(text.slice(start,end+1));throw new Error('Requesty returned non-JSON output');}}
+async function callRequesty(body){
+  if(!REQUESTY_KEY)return null;
+  const referenceText=(body.context||[]).map(x=>`[${x.id}] ${x.title}\n${x.text||x.phrases?.join(' ')||''}`).join('\n\n');
+  const lang=ANSWER_LANGUAGE==='en'?'English':'French';
+  const payload={
+    model:MODEL,
+    messages:[
+      {role:'system',content:`You are the realtime interview assistant for 3V0L. Answer in ${lang} only. Use ONLY the supplied interview references and Omar's stated experience. Never invent facts, tools, metrics, responsibilities, employers or policies. Prefer a matching reference when one exists. The answer must be natural spoken language, concise, and usable directly in an interview.`},
+      {role:'user',content:`Interview question:\n${body.transcript}\n\nProvided interview references:\n${referenceText||'(none)'}\n\nGenerate the best speakable answer.`}
+    ],
+    temperature:.12,
+    max_tokens:450,
+    response_format:{
+      type:'json_schema',
+      json_schema:{
+        name:'interview_response',
+        strict:true,
+        schema:{
+          type:'object',
+          additionalProperties:false,
+          properties:{
+            intent:{type:'string'},
+            direction:{type:'array',items:{type:'string'}},
+            say_this:{type:'string'},
+            best_reference:{type:['string','null']},
+            confidence:{type:'number',minimum:0,maximum:1}
+          },
+          required:['intent','direction','say_this','best_reference','confidence']
+        }
+      }
+    }
+  };
+  const resp=await fetch(REQUESTY_URL,{method:'POST',headers:{authorization:`Bearer ${REQUESTY_KEY}`,'content-type':'application/json','HTTP-Referer':'http://3v0l.local','X-Title':'3V0L Interview Copilot'},body:JSON.stringify(payload)});
+  if(!resp.ok)throw new Error(`Requesty ${resp.status}: ${await resp.text()}`);
+  const data=await resp.json();
+  const text=String(data?.choices?.[0]?.message?.content||'').trim();
+  try{return JSON.parse(text);}catch{}
+  const cleaned=text.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
+  try{return JSON.parse(cleaned);}catch{}
+  const start=cleaned.indexOf('{'),end=cleaned.lastIndexOf('}');
+  if(start>=0&&end>start){try{return JSON.parse(cleaned.slice(start,end+1));}catch{}}
+  throw new Error('Requesty returned unusable structured output');
+}
 async function handleEvent(payload){const transcript=String(payload.transcript||payload.text||'').trim();if(!transcript)return state;const context=Array.isArray(payload.context)&&payload.context.length?payload.context.slice(0,8):relevantRefs(transcript);const base=heuristic(transcript,context);let ai=null;if(payload.final!==false){try{ai=await callRequesty({transcript,speaker:payload.speaker||'interviewer',context});}catch(err){state.error=String(err.message||err);}}const merged=ai||base;state={...state,lastEventAt:new Date().toISOString(),speaker:payload.speaker||'interviewer',transcript,final:payload.final!==false,intent:merged.intent||base.intent,direction:Array.isArray(merged.direction)?merged.direction:base.direction,sayThis:String(merged.say_this||base.sayThis||''),bestReference:merged.best_reference??base.bestReference,confidence:Number.isFinite(+merged.confidence)?+merged.confidence:base.confidence,provider:ai?'requesty':(payload.provider||'local'),error:state.error||null};return state;}
 setTranscriptHandler(handleEvent);
 if(AUDIO_ENABLED){try{startSttServer();}catch(err){console.error('STT server failed:',err.message);}}
