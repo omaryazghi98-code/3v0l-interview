@@ -2,18 +2,26 @@
   const API=localStorage.getItem('3v0l-relay')||'http://127.0.0.1:38471';
   let last=Number(localStorage.getItem('3v0l-remote-cursor')||0);
   const click=s=>document.querySelector(s)?.click();
+  const key=(code,keyValue=code)=>document.dispatchEvent(new KeyboardEvent('keydown',{code,key:keyValue,bubbles:true,cancelable:true}));
   const jump=route=>{
     const b=document.createElement('button');
     b.type='button';b.dataset.route=route;b.hidden=true;
     document.getElementById('view')?.appendChild(b);b.click();b.remove();
   };
-  const key=(code,keyValue=code)=>document.dispatchEvent(new KeyboardEvent('keydown',{code,key:keyValue,bubbles:true,cancelable:true}));
   const run=cmd=>{
     const a=cmd.action;
-    if(a==='next-live')return click('[data-action="next-live"]');
-    if(a==='prev-live')return click('[data-action="prev-live"]');
-    if(a==='next-call')return click('[data-action="next-call"]');
-    if(a==='prev-call')return click('[data-action="prev-call"]');
+    if(a==='next-live'){
+      const b=document.querySelector('[data-action="next-live"]');
+      if(b)b.click(); else key('Space',' ');
+      return;
+    }
+    if(a==='prev-live'){
+      const b=document.querySelector('[data-action="prev-live"]');
+      if(b)b.click(); else key('ArrowLeft','ArrowLeft');
+      return;
+    }
+    if(a==='next-call')return click('[data-action="next-call"]')||key('ArrowRight','ArrowRight');
+    if(a==='prev-call')return click('[data-action="prev-call"]')||key('ArrowLeft','ArrowLeft');
     if(a==='call-next-step')return key('Enter','Enter');
     if(a==='scroll-down')return document.querySelector('#teleprompter,.call-steps')?.scrollBy(0,220);
     if(a==='scroll-up')return document.querySelector('#teleprompter,.call-steps')?.scrollBy(0,-220);
