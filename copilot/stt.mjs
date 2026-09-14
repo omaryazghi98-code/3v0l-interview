@@ -13,8 +13,23 @@ const SAMPLE_RATE = Number(process.env.AUDIO_SAMPLE_RATE || 48000);
 
 let active = null;
 let onTranscript = async () => {};
+let enabled = { deepgram: true, azure: true };
 
 export function setTranscriptHandler(fn) { onTranscript = fn; }
+
+export function setSttProviderEnabled(provider, value) {
+  const name = String(provider || '').toLowerCase();
+  if (!(name in enabled)) return false;
+  enabled[name] = Boolean(value);
+  if (!enabled[name] && active?.provider === name) {
+    try { active.stt.close(); } catch {}
+    try { active.socket.destroy(); } catch {}
+    active = null;
+  }
+  return true;
+}
+
+export function sttProviderControls() { return {...enabled}; }
 
 function send(payload) {
   return Promise.resolve(onTranscript(payload)).catch(err => console.error('transcript handler:', err));
@@ -30,8 +45,7 @@ function createDeepgram() {
       const m = JSON.parse(data.toString());
       const text = m?.channel?.alternatives?.[0]?.transcript?.trim();
       if (!text) return;
-      const final = Boolean(m?.is_final);
-      send({transcript:text, speaker:'interviewer', final, provider:'deepgram'});
+      send({transcript:text, speaker:'interviewer', final:Boolean(m?.is_final), provider:'deepgram'});
     } catch {}
   });
   ws.on('error', e => console.error('Deepgram:', e.message));
@@ -68,8 +82,14 @@ function createAzure() {
 }
 
 function chooseProvider() {
-  if (STT_PROVIDER === 'azure') return createAzure();
-  if (STT_PROVIDER === 'deepgram') return createDeepgram();
+  if (STT_PROVIDER === 'azure') {
+    if (!enabled.azure) throw new Error('Azure Speech is disabled in API controls');
+    return createAzure();
+  }
+  if (STT_PROVIDER === 'deepgram') {
+    if (!enabled.deepgram) throw new Error('Deepgram is disabled in API controls');
+    return createDeepgram();
+  }
   throw new Error(`Unsupported STT_PROVIDER: ${STT_PROVIDER}`);
 }
 
@@ -79,15 +99,10 @@ function startSession(socket) {
   try { stt = chooseProvider(); } catch (err) {
     socket.write(`ERR ${err.message}\n`); socket.destroy(); return;
   }
-  active = {socket,stt,startedAt:new Date().toISOString()};
+  active = {socket,stt,provider:STT_PROVIDER,startedAt:new Date().toISOString()};
   socket.write('OK 3V0L-AUDIO/1\n');
-  socket.on('data', chunk => {
-    if (chunk.length) stt.write(chunk);
-  });
-  socket.on('close', () => {
-    try { stt.close(); } catch {}
-    if (active?.socket === socket) active = null;
-  });
+  socket.on('data', chunk => { if (chunk.length) stt.write(chunk); });
+  socket.on('close', () => { try { stt.close(); } catch {} if (active?.socket === socket) active = null; });
   socket.on('error', () => { try { stt.close(); } catch {} });
 }
 
@@ -98,5 +113,5 @@ export function startSttServer() {
 }
 
 export function sttStatus() {
-  return {provider:STT_PROVIDER,connected:Boolean(active),audioPort:AUDIO_PORT,sampleRate:SAMPLE_RATE,activeSince:active?.startedAt||null};
+  return {provider:STT_PROVIDER,connected:Boolean(active),audioPort:AUDIO_PORT,sampleRate:SAMPLE_RATE,activeSince:active?.startedAt||null,enabled:{...enabled}};
 }
