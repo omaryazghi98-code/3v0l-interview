@@ -4,23 +4,22 @@
   const click=s=>document.querySelector(s)?.click();
   const key=(code,keyValue=code)=>document.dispatchEvent(new KeyboardEvent('keydown',{code,key:keyValue,bubbles:true,cancelable:true}));
   const jump=route=>{
+    if(route==='index'){
+      if(typeof window.__3v0lHome==='function'){window.__3v0lHome();return;}
+      const home=document.querySelector('[data-action="home"]');
+      if(home){home.click();return;}
+    }
+    if(typeof window.__3v0lGo==='function'){window.__3v0lGo(route);return;}
     const picker=document.getElementById('globalJump');
     if(picker){
       picker.value=route;
       picker.dispatchEvent(new Event('change',{bubbles:true}));
       return;
     }
-    if(route==='index'){
-      const home=document.querySelector('[data-action="home"],[data-route="index"]');
-      if(home){home.click();return;}
-    }
-    const b=document.createElement('button');
-    b.type='button';b.dataset.route=route;b.hidden=true;
-    document.getElementById('view')?.appendChild(b);b.click();b.remove();
   };
   const run=cmd=>{
     let a=String(cmd.action||'');
-    let value=cmd.value??null;
+    let value=cmd.value;
     if(a.startsWith('jump:')){value=a.slice(5);a='jump';}
     if(a==='next-live'){
       const b=document.querySelector('[data-action="next-live"]');
