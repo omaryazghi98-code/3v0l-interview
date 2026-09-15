@@ -26,6 +26,9 @@
 
 #pragma comment(lib, "ws2_32.lib")
 using Microsoft::WRL::ComPtr;
+using Microsoft::WRL::RuntimeClass;
+using Microsoft::WRL::RuntimeClassFlags;
+using Microsoft::WRL::ClassicCom;
 
 namespace {
 
@@ -52,40 +55,28 @@ uint32_t parseUint(const char* s, uint32_t fallback) {
     return (end && *end == '\0') ? static_cast<uint32_t>(v) : fallback;
 }
 
-class ActivationHandler final : public IActivateAudioInterfaceCompletionHandler {
+class ActivationHandler final : public RuntimeClass<RuntimeClassFlags<ClassicCom>, IActivateAudioInterfaceCompletionHandler> {
 public:
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override {
-        if (!ppvObject) return E_POINTER;
-        *ppvObject = nullptr;
-        if (riid == __uuidof(IUnknown) || riid == __uuidof(IActivateAudioInterfaceCompletionHandler)) {
-            *ppvObject = static_cast<IActivateAudioInterfaceCompletionHandler*>(this);
-            AddRef();
-            return S_OK;
-        }
-        return E_NOINTERFACE;
-    }
-    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs_; }
-    ULONG STDMETHODCALLTYPE Release() override {
-        ULONG v = --refs_;
-        if (!v) delete this;
-        return v;
-    }
     HRESULT STDMETHODCALLTYPE ActivateCompleted(IActivateAudioInterfaceAsyncOperation* operation) override {
         HRESULT activationHr = E_FAIL;
         ComPtr<IUnknown> activated;
-        if (operation) activationHr = operation->GetActivateResult(&activationHr, &activated);
+        if (operation) {
+            activationHr = operation->GetActivateResult(&activationHr, &activated);
+        }
         resultHr_ = activationHr;
         activated_ = activated;
         SetEvent(event_);
         return S_OK;
     }
+
     HANDLE event() const { return event_; }
     HRESULT resultHr() const { return resultHr_; }
     ComPtr<IUnknown> activated() const { return activated_; }
+
     ActivationHandler() : event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
     ~ActivationHandler() { if (event_) CloseHandle(event_); }
+
 private:
-    std::atomic<ULONG> refs_{1};
     HANDLE event_ = nullptr;
     HRESULT resultHr_ = E_FAIL;
     ComPtr<IUnknown> activated_;
