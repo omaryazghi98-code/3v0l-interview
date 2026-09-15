@@ -216,7 +216,7 @@ int main(int argc, char** argv) {
     activationParams.blob.cbSize = sizeof(params);
     activationParams.blob.pBlobData = reinterpret_cast<BYTE*>(&params);
 
-    ActivationHandler* handler = Microsoft::WRL::Make<ActivationHandler>();
+    ComPtr<ActivationHandler> handler = Microsoft::WRL::Make<ActivationHandler>();
     if (!handler) {
         std::cerr << "ActivationHandler allocation failed.\n";
         CoUninitialize();
@@ -225,17 +225,15 @@ int main(int argc, char** argv) {
     }
     if (!handler->event()) {
         std::cerr << "CreateEventW failed.\n";
-        handler->Release();
         CoUninitialize();
         if (streamMode) WSACleanup();
         return 1;
     }
 
     IActivateAudioInterfaceAsyncOperation* asyncOp = nullptr;
-    hr = ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, __uuidof(IAudioClient), &activationParams, handler, &asyncOp);
+    hr = ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, __uuidof(IAudioClient), &activationParams, handler.Get(), &asyncOp);
     if (FAILED(hr)) {
         std::cerr << "ActivateAudioInterfaceAsync failed: 0x" << std::hex << hr << std::dec << "\n";
-        handler->Release();
         CoUninitialize();
         if (streamMode) WSACleanup();
         return 1;
@@ -244,21 +242,18 @@ int main(int argc, char** argv) {
 
     if (WaitForSingleObject(handler->event(), 5000) != WAIT_OBJECT_0) {
         std::cerr << "Audio activation timed out.\n";
-        handler->Release();
         CoUninitialize();
         if (streamMode) WSACleanup();
         return 1;
     }
     if (FAILED(handler->resultHr())) {
         std::cerr << "Audio activation failed: 0x" << std::hex << handler->resultHr() << std::dec << "\n";
-        handler->Release();
         CoUninitialize();
         if (streamMode) WSACleanup();
         return 1;
     }
 
     ComPtr<IUnknown> activated = handler->activated();
-    handler->Release();
 
     ComPtr<IAudioClient> client;
     hr = activated.As(&client);
