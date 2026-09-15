@@ -4,6 +4,7 @@
 // to the PC3 STT relay over TCP when a host/port are supplied.
 
 #include <windows.h>
+#include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <audioclientactivationparams.h>
 #include <avrt.h>
@@ -12,6 +13,7 @@
 #include <ws2tcpip.h>
 #include <ksmedia.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
