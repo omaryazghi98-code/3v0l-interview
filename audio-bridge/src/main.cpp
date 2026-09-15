@@ -26,9 +26,6 @@
 
 #pragma comment(lib, "ws2_32.lib")
 using Microsoft::WRL::ComPtr;
-using Microsoft::WRL::RuntimeClass;
-using Microsoft::WRL::RuntimeClassFlags;
-using Microsoft::WRL::ClassicCom;
 
 namespace {
 
@@ -55,14 +52,42 @@ uint32_t parseUint(const char* s, uint32_t fallback) {
     return (end && *end == '\0') ? static_cast<uint32_t>(v) : fallback;
 }
 
-class ActivationHandler final : public RuntimeClass<RuntimeClassFlags<ClassicCom>, IActivateAudioInterfaceCompletionHandler> {
+class ActivationHandler final : public IActivateAudioInterfaceCompletionHandler {
 public:
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override {
+        if (!ppvObject) return E_POINTER;
+        *ppvObject = nullptr;
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IActivateAudioInterfaceCompletionHandler)) {
+            *ppvObject = static_cast<IActivateAudioInterfaceCompletionHandler*>(this);
+            AddRef();
+            return S_OK;
+        }
+        return E_NOINTERFACE;
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef() override {
+        return ++refs_;
+    }
+
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG v = --refs_;
+        if (!v) delete this;
+        return v;
+    }
+
     HRESULT STDMETHODCALLTYPE ActivateCompleted(IActivateAudioInterfaceAsyncOperation* operation) override {
         HRESULT activationHr = E_FAIL;
         ComPtr<IUnknown> activated;
-        if (operation) {
-            activationHr = operation->GetActivateResult(&activationHr, &activated);
+
+        if (!operation) {
+            resultHr_ = E_POINTER;
+            SetEvent(event_);
+            return S_OK;
         }
+
+        HRESULT getHr = operation->GetActivateResult(&activationHr, &activated);
+        if (FAILED(getHr)) activationHr = getHr;
+
         resultHr_ = activationHr;
         activated_ = activated;
         SetEvent(event_);
@@ -74,9 +99,13 @@ public:
     ComPtr<IUnknown> activated() const { return activated_; }
 
     ActivationHandler() : event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
-    ~ActivationHandler() { if (event_) CloseHandle(event_); }
 
 private:
+    ~ActivationHandler() {
+        if (event_) CloseHandle(event_);
+    }
+
+    std::atomic<ULONG> refs_{1};
     HANDLE event_ = nullptr;
     HRESULT resultHr_ = E_FAIL;
     ComPtr<IUnknown> activated_;
@@ -204,26 +233,61 @@ int main(int argc, char** argv) {
     activationParams.blob.cbSize = sizeof(params);
     activationParams.blob.pBlobData = reinterpret_cast<BYTE*>(&params);
 
-    ComPtr<ActivationHandler> handler = Microsoft::WRL::Make<ActivationHandler>();
+    ActivationHandler* handler = new ActivationHandler();
+    if (!handler->event()) {
+        std::cerr << "CreateEventW failed.\n";
+        handler->Release();
+        if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
+        CoUninitialize();
+        if (streamMode) WSACleanup();
+        return 1;
+    }
+
     IActivateAudioInterfaceAsyncOperation* asyncOp = nullptr;
-    hr = ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, __uuidof(IAudioClient), &activationParams, handler.Get(), &asyncOp);
-    if (FAILED(hr)) { std::cerr << "ActivateAudioInterfaceAsync failed: 0x" << std::hex << hr << std::dec << "\n"; CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
-    asyncOp->Release();
-    if (WaitForSingleObject(handler->event(), 5000) != WAIT_OBJECT_0 || FAILED(handler->resultHr())) { std::cerr << "Audio activation failed.\n"; CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
+    hr = ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, __uuidof(IAudioClient), &activationParams, handler, &asyncOp);
+    if (FAILED(hr)) {
+        std::cerr << "ActivateAudioInterfaceAsync failed: 0x" << std::hex << hr << std::dec << "\n";
+        handler->Release();
+        if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
+        CoUninitialize();
+        if (streamMode) WSACleanup();
+        return 1;
+    }
+    if (asyncOp) asyncOp->Release();
+
+    if (WaitForSingleObject(handler->event(), 5000) != WAIT_OBJECT_0) {
+        std::cerr << "Audio activation timed out.\n";
+        handler->Release();
+        if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
+        CoUninitialize();
+        if (streamMode) WSACleanup();
+        return 1;
+    }
+    if (FAILED(handler->resultHr())) {
+        std::cerr << "Audio activation failed: 0x" << std::hex << handler->resultHr() << std::dec << "\n";
+        handler->Release();
+        if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
+        CoUninitialize();
+        if (streamMode) WSACleanup();
+        return 1;
+    }
+
+    ComPtr<IUnknown> activated = handler->activated();
+    handler->Release();
 
     ComPtr<IAudioClient> client;
-    hr = handler->activated().As(&client);
-    if (FAILED(hr)) { std::cerr << "Could not get IAudioClient.\n"; CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
+    hr = activated.As(&client);
+    if (FAILED(hr)) { std::cerr << "Could not get IAudioClient.\n"; if (mmcss) AvRevertMmThreadCharacteristics(mmcss); CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
     WAVEFORMATEX* mix = nullptr;
     hr = client->GetMixFormat(&mix);
-    if (FAILED(hr) || !mix) { std::cerr << "GetMixFormat failed.\n"; CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
+    if (FAILED(hr) || !mix) { std::cerr << "GetMixFormat failed.\n"; if (mmcss) AvRevertMmThreadCharacteristics(mmcss); CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
     std::cout << "PID " << pid << " -> " << mix->nSamplesPerSec << " Hz, " << mix->nChannels << " ch\n";
 
     hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, 1000000, 0, mix, nullptr);
-    if (FAILED(hr)) { std::cerr << "Audio Initialize failed: 0x" << std::hex << hr << std::dec << "\n"; CoTaskMemFree(mix); CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
+    if (FAILED(hr)) { std::cerr << "Audio Initialize failed: 0x" << std::hex << hr << std::dec << "\n"; CoTaskMemFree(mix); if (mmcss) AvRevertMmThreadCharacteristics(mmcss); CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
     ComPtr<IAudioCaptureClient> capture;
     hr = client->GetService(IID_PPV_ARGS(&capture));
-    if (FAILED(hr)) { std::cerr << "GetService failed.\n"; CoTaskMemFree(mix); CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
+    if (FAILED(hr)) { std::cerr << "GetService failed.\n"; CoTaskMemFree(mix); if (mmcss) AvRevertMmThreadCharacteristics(mmcss); CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
 
     std::ofstream wav(output, std::ios::binary | std::ios::trunc);
     WavHeader header;
@@ -240,7 +304,7 @@ int main(int argc, char** argv) {
     }
 
     hr = client->Start();
-    if (FAILED(hr)) { std::cerr << "Start failed.\n"; if (sock != INVALID_SOCKET) closesocket(sock); if (wav) wav.close(); CoTaskMemFree(mix); CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
+    if (FAILED(hr)) { std::cerr << "Start failed.\n"; if (sock != INVALID_SOCKET) closesocket(sock); if (wav) wav.close(); CoTaskMemFree(mix); if (mmcss) AvRevertMmThreadCharacteristics(mmcss); CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
 
     std::cout << (streamMode && seconds == 0 ? "Streaming until interrupted...\n" : "Capturing...\n");
     const auto deadline = seconds ? std::chrono::steady_clock::now() + std::chrono::seconds(seconds) : std::chrono::steady_clock::time_point::max();
@@ -258,7 +322,7 @@ int main(int argc, char** argv) {
             hr = capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr);
             if (FAILED(hr)) break;
             if (flags & AUDCLNT_BUFFERFLAGS_SILENT) mono.assign(frames, 0);
-            else if (!convertToPcm16(data, frames, mix, pcm)) { std::cerr << "Unsupported audio format.\n"; capture->ReleaseBuffer(frames); client->Stop(); if (sock != INVALID_SOCKET) closesocket(sock); if (wav) wav.close(); CoTaskMemFree(mix); CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
+            else if (!convertToPcm16(data, frames, mix, pcm)) { std::cerr << "Unsupported audio format.\n"; capture->ReleaseBuffer(frames); client->Stop(); if (sock != INVALID_SOCKET) closesocket(sock); if (wav) wav.close(); CoTaskMemFree(mix); if (mmcss) AvRevertMmThreadCharacteristics(mmcss); CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
             if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT)) downmixToMono(pcm, mix->nChannels, mono);
             const BYTE* bytes = reinterpret_cast<const BYTE*>(mono.data());
             const size_t byteCount = mono.size() * sizeof(int16_t);
