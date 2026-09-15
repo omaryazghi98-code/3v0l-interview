@@ -1,0 +1,47 @@
+{
+  "purpose": "Prevent employer/channel contamination and unsupported claims in live interview answers.",
+  "person": "Omar Yazghi Moubachir",
+  "routing": {
+    "Spotify / ModSquad": {
+      "channel": ["live chat"],
+      "strong_for": ["multitasking", "4-7 concurrent conversations", "chat support", "account support", "technical support", "high volume"],
+      "do_not_infer": ["phone support", "email support as a Spotify-specific example", "formal management"]
+    },
+    "Comdata": {
+      "channel": ["phone", "operations", "back-office"],
+      "strong_for": ["ENGIE Iris", "inbound calls", "outbound calls", "complex cases", "coordination", "agent guidance", "Uber/Uber Eats back-office", "Uber Freight operations"],
+      "do_not_infer": ["4-7 simultaneous chats", "formal team manager", "formal project manager"]
+    },
+    "Epic Games / 5CA": {
+      "channel": ["gaming support"],
+      "strong_for": ["account issues", "gameplay issues", "transactions", "in-game purchases", "complex gaming cases", "escalation"],
+      "do_not_infer": ["current TransPerfect internal tools", "current TransPerfect KPIs", "guaranteed refund timelines"]
+    },
+    "Airalo": {
+      "channel": ["technical support", "project coordination"],
+      "strong_for": ["eSIM", "ICCID", "APN", "device compatibility", "configuration", "recurring issues", "Assistant Project Manager responsibilities for approximately two months"],
+      "do_not_infer": ["full-time Project Manager title", "people management authority"]
+    },
+    "Beerwulf / 5CA": {
+      "channel": ["customer support", "technical support", "e-commerce"],
+      "strong_for": ["damaged products", "missing components", "replacement", "refund decision based on case economics"],
+      "do_not_infer": ["gaming experience", "phone experience unless separately established"]
+    }
+  },
+  "global_rules": [
+    "Always choose the employer that actually supports the asked skill.",
+    "If the question contains a false premise, correct it briefly instead of accepting it.",
+    "Do not invent proprietary names, policies, KPIs, metrics, timelines, permissions, account actions, or responsibilities.",
+    "For unknown details, say you would verify the exact information.",
+    "Keep answers first-person, natural, concise, and speakable.",
+    "Separate personal work-history evidence from hypothetical support scenarios."
+  ],
+  "high_risk_tests": [
+    "Comdata + 4-7 chats",
+    "Spotify + phone support",
+    "Airalo + formal Project Manager title",
+    "Epic + exact proprietary tool",
+    "Epic + guaranteed refund timing",
+    "TransPerfect + exact internal KPI"
+  ]
+}
