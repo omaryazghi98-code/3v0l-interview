@@ -83,7 +83,7 @@ public:
     HRESULT resultHr() const { return resultHr_; }
     ComPtr<IUnknown> activated() const { return activated_; }
     ActivationHandler() : event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
-    ~ActivationHandler() override { if (event_) CloseHandle(event_); }
+    ~ActivationHandler() { if (event_) CloseHandle(event_); }
 private:
     std::atomic<ULONG> refs_{1};
     HANDLE event_ = nullptr;
@@ -207,9 +207,15 @@ int main(int argc, char** argv) {
     params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
     params.ProcessLoopbackParams.TargetProcessId = pid;
     params.ProcessLoopbackParams.ProcessLoopbackMode = PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
+
+    PROPVARIANT activationParams{};
+    activationParams.vt = VT_BLOB;
+    activationParams.blob.cbSize = sizeof(params);
+    activationParams.blob.pBlobData = reinterpret_cast<BYTE*>(&params);
+
     ComPtr<ActivationHandler> handler = Microsoft::WRL::Make<ActivationHandler>();
     IActivateAudioInterfaceAsyncOperation* asyncOp = nullptr;
-    hr = ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, __uuidof(IAudioClient), &params, handler.Get(), &asyncOp);
+    hr = ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, __uuidof(IAudioClient), &activationParams, handler.Get(), &asyncOp);
     if (FAILED(hr)) { std::cerr << "ActivateAudioInterfaceAsync failed: 0x" << std::hex << hr << std::dec << "\n"; CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
     asyncOp->Release();
     if (WaitForSingleObject(handler->event(), 5000) != WAIT_OBJECT_0 || FAILED(handler->resultHr())) { std::cerr << "Audio activation failed.\n"; CoUninitialize(); if (streamMode) WSACleanup(); return 1; }
