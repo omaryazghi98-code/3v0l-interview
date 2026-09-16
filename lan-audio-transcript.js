@@ -3,43 +3,32 @@
   const COPILOT_URL = localStorage.getItem('3v0l-copilot-url') || 'http://127.0.0.1:38471';
   let source = null;
   let retry = 1000;
-  let finals = [];
+  let latestFinal = '';
   let interim = '';
   let lastAnalyzed = '';
 
   function render() {
     const target = document.getElementById('cpTranscript');
     if (!target) return;
-
-    const parts = finals.slice(-6);
-    if (interim) parts.push(interim);
-    if (!parts.length) return;
-    target.textContent = parts.join('\n');
+    const text = interim || latestFinal;
+    if (text) target.textContent = text;
   }
 
   async function sendToCopilot(text) {
     const clean = String(text || '').trim();
     if (!clean || clean === lastAnalyzed) return;
     lastAnalyzed = clean;
-
-    // Prefer the live copilot object when the UI has initialized, but keep a
-    // direct relay path so audio/STT can start before the sidebar is ready.
     try {
       if (window.__3v0lCopilot?.analyze) {
         await window.__3v0lCopilot.analyze(clean);
         return;
       }
     } catch {}
-
     try {
       await fetch(`${COPILOT_URL}/event`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          transcript: clean,
-          speaker: 'interviewer',
-          final: true
-        })
+        body: JSON.stringify({ transcript: clean, speaker: 'interviewer', final: true })
       });
     } catch {}
   }
@@ -61,19 +50,15 @@
             return;
           }
           if (payload.type !== 'speaker_transcript') return;
-
           const text = String(payload.text || '').trim();
           if (!text) return;
-
           if (payload.is_final) {
-            finals.push(text);
-            finals = finals.slice(-6);
+            latestFinal = text;
             interim = '';
             void sendToCopilot(text);
           } else {
             interim = text;
           }
-
           window.__3v0lLastInterviewerTranscript = text;
           window.dispatchEvent(new CustomEvent('nexq-speaker-transcript', { detail: payload }));
           render();
