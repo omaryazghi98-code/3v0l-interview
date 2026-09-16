@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.mjs",
-    "start:verbose": "node --trace-warnings server.mjs"
+    "start": "node start.mjs",
+    "start:verbose": "node --trace-warnings start.mjs"
   },
   "dependencies": {
     "microsoft-cognitiveservices-speech-sdk": "^1.51.0",
