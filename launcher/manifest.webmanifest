@@ -3,9 +3,12 @@
   "short_name": "3V0L Launcher",
   "description": "Three-PC interview command center",
   "start_url": "./dashboard.html",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#080b10",
   "theme_color": "#080b10",
   "orientation": "landscape",
-  "icons": []
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
 }
