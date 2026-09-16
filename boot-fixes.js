@@ -45,7 +45,7 @@
     const typing=['INPUT','TEXTAREA'].includes(document.activeElement?.tagName);
     if(typing)return;
     const target=autoTarget();
-    if((e.code==='Space'||e.key===' ')&&target){e.preventDefault();if(document.getElementById('teleprompter'))document.querySelector('[data-action="next-live"]')?.click();else sendKey('Enter','Enter');return}
+    if((e.code==='Space'||e.key===' ')&&document.getElementById('teleprompter')){e.preventDefault();document.querySelector('[data-action="next-live"]')?.click();return}
     if((e.code==='KeyT'||e.key.toLowerCase()==='t')&&target){
       e.preventDefault();
       const b=document.querySelector('[data-action="toggle-auto"]');
