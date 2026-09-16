@@ -1,0 +1,22 @@
+{
+  "machine": { "name": "HP · NexQ Core + Audio Source" },
+  "services": {
+    "nexq-core": {
+      "name": "NexQ Core",
+      "description": "NexQ interview core",
+      "cwd": "C:\\path\\to\\3v0l-interview",
+      "command": "npm run dev",
+      "autostart": false,
+      "detect": { "type": "none" }
+    },
+    "audio-listener": {
+      "name": "NexQ System Audio Listener",
+      "description": "Captures system audio and sends PCM to Acer 38472",
+      "cwd": "C:\\path\\to\\3v0l-interview\\audio-bridge",
+      "command": ".\\build\\Release\\3v0l-listener.exe --system 0 bridge.wav 192.168.11.103 38472",
+      "autostart": false,
+      "detect": { "type": "tcp-target", "host": "192.168.11.103", "port": 38472 }
+    }
+  },
+  "health": []
+}
