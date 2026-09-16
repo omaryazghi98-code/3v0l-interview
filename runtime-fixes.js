@@ -31,9 +31,23 @@
   function rerenderCalls(){
     const view=document.getElementById('view');
     if(!view)return;
-    const old=document.querySelector('.call-steps')?.scrollTop||0;
+    const oldViewScroll=view.scrollTop;
     view.innerHTML=callMarkup();
-    requestAnimationFrame(()=>{const box=document.querySelector('.call-steps');if(box)box.scrollTop=old;});
+    requestAnimationFrame(()=>{
+      const box=document.querySelector('.call-steps');
+      const selected=document.querySelector('.call-step.selected');
+      if(box)box.scrollTop=0;
+      if(selected){
+        const viewRect=view.getBoundingClientRect();
+        const stepRect=selected.getBoundingClientRect();
+        const margin=Math.min(80,Math.max(24,view.clientHeight*0.14));
+        const desired=view.scrollTop+(stepRect.top-viewRect.top)-((view.clientHeight-stepRect.height)/2);
+        const max=Math.max(0,view.scrollHeight-view.clientHeight);
+        view.scrollTop=Math.max(0,Math.min(max,desired));
+      }else{
+        view.scrollTop=oldViewScroll;
+      }
+    });
   }
   function onCallAction(type,n){
     const all=phoneCalls();if(!all.length)return;
