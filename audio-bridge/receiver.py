@@ -121,102 +121,129 @@ def transcriber(conn: socket.socket, addr: tuple[str, int]) -> None:
         conn.close()
         return
 
-    ws = None
-    stop = threading.Event()
-    ws_send_lock = threading.Lock()
-
-    def send_ws(payload: object, *, opcode: int | None = None) -> None:
-        if ws is None:
-            return
-        with ws_send_lock:
-            if opcode is None:
-                ws.send(payload)
-            else:
-                ws.send(payload, opcode=opcode)
-
-    def read_deepgram() -> None:
-        try:
-            while not stop.is_set():
-                try:
-                    message = ws.recv()
-                except websocket.WebSocketTimeoutException:
-                    # Short recv timeout keeps shutdown responsive. Timeout is not a disconnect.
-                    continue
-                if not message:
-                    break
-                if isinstance(message, bytes):
-                    continue
-                try:
-                    obj = json.loads(message)
-                except json.JSONDecodeError:
-                    continue
-                if obj.get("type") != "Results":
-                    continue
-                channel = obj.get("channel") or {}
-                alternatives = channel.get("alternatives") or []
-                if not alternatives:
-                    continue
-                transcript = str(alternatives[0].get("transcript") or "").strip()
-                if not transcript:
-                    continue
-                event = {
-                    "type": "speaker_transcript",
-                    "text": transcript,
-                    "speaker": "Them",
-                    "is_final": bool(obj.get("is_final", False)),
-                    "speech_final": bool(obj.get("speech_final", False)),
-                    "timestamp_ms": int(time.time() * 1000),
-                }
-                emit(event)
-                print(
-                    f"[{('FINAL' if event['is_final'] else 'INTERIM')}] {transcript}",
-                    flush=True,
-                )
-        except Exception as exc:
-            if not stop.is_set():
-                print(f"Deepgram receive error: {exc}", flush=True)
-        finally:
-            stop.set()
-
-    def keepalive() -> None:
-        while not stop.wait(5):
-            try:
-                send_ws(json.dumps({"type": "KeepAlive"}))
-            except Exception as exc:
-                if not stop.is_set():
-                    print(f"Deepgram keepalive error: {exc}", flush=True)
-                stop.set()
-                break
+    MAX_RECONNECT = 5
+    RECONNECT_DELAY = 3  # seconds
 
     print(f"Audio client connected: {addr}", flush=True)
-    try:
-        ws = websocket.create_connection(
-            deepgram_url(),
-            header=[f"Authorization: Token {api_key}"],
-            timeout=10,
-        )
-        ws.settimeout(2)
-        print("Deepgram connected.", flush=True)
-        emit({"type": "status", "connected": True, "source": "deepgram"})
+    reconnect_attempts = 0
 
-        reader = threading.Thread(target=read_deepgram, daemon=True)
-        reader.start()
-        heartbeat = threading.Thread(target=keepalive, daemon=True)
-        heartbeat.start()
+    while True:
+        ws = None
+        stop = threading.Event()
+        ws_send_lock = threading.Lock()
 
-        while not stop.is_set():
-            data = conn.recv(65536)
-            if not data:
-                break
+        def send_ws(payload: object, *, opcode: int | None = None) -> None:
+            if ws is None:
+                return
+            with ws_send_lock:
+                if opcode is None:
+                    ws.send(payload)
+                else:
+                    ws.send(payload, opcode=opcode)
+
+        def read_deepgram() -> None:
             try:
-                send_ws(data, opcode=websocket.ABNF.OPCODE_BINARY)
+                while not stop.is_set():
+                    try:
+                        message = ws.recv()
+                    except websocket.WebSocketTimeoutException:
+                        continue
+                    if not message:
+                        break
+                    if isinstance(message, bytes):
+                        continue
+                    try:
+                        obj = json.loads(message)
+                    except json.JSONDecodeError:
+                        continue
+                    if obj.get("type") != "Results":
+                        continue
+                    channel = obj.get("channel") or {}
+                    alternatives = channel.get("alternatives") or []
+                    if not alternatives:
+                        continue
+                    transcript = str(alternatives[0].get("transcript") or "").strip()
+                    if not transcript:
+                        continue
+                    event = {
+                        "type": "speaker_transcript",
+                        "text": transcript,
+                        "speaker": "Them",
+                        "is_final": bool(obj.get("is_final", False)),
+                        "speech_final": bool(obj.get("speech_final", False)),
+                        "timestamp_ms": int(time.time() * 1000),
+                    }
+                    emit(event)
+                    print(
+                        f"[{('FINAL' if event['is_final'] else 'INTERIM')}] {transcript}",
+                        flush=True,
+                    )
             except Exception as exc:
-                print(f"Deepgram send error: {exc}", flush=True)
-                break
-    except Exception as exc:
-        print(f"Deepgram connection error: {exc}", flush=True)
-        emit({"type": "status", "connected": False, "error": str(exc)})
-    finally:
+                if not stop.is_set():
+                    print(f"Deepgram receive error: {exc}", flush=True)
+            finally:
+                stop.set()
+
+        def keepalive() -> None:
+            while not stop.wait(5):
+                try:
+                    send_ws(json.dumps({"type": "KeepAlive"}))
+                except Exception as exc:
+                    if not stop.is_set():
+                        print(f"Deepgram keepalive error: {exc}", flush=True)
+                    stop.set()
+                    break
+
+        # --- Attempt a Deepgram session ---
+        try:
+            ws = websocket.create_connection(
+                deepgram_url(),
+                header=[f"Authorization: Token {api_key}"],
+                timeout=10,
+            )
+            ws.settimeout(2)
+            reconnect_attempts = 0
+            print("Deepgram connected.", flush=True)
+            emit({"type": "status", "connected": True, "source": "deepgram"})
+
+            reader = threading.Thread(target=read_deepgram, daemon=True)
+            reader.start()
+            heartbeat = threading.Thread(target=keepalive, daemon=True)
+            heartbeat.start()
+
+            while not stop.is_set():
+                data = conn.recv(65536)
+                if not data:
+                    # TCP client disconnected — permanent, do not reconnect
+                    stop.set()
+                    try:
+                        if ws:
+                            try:
+                                send_ws(json.dumps({"type": "CloseStream"}))
+                            except Exception:
+                                pass
+                            ws.close()
+                    except Exception:
+                        pass
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    emit({"type": "status", "connected": False, "source": "deepgram"})
+                    print(f"Audio client disconnected: {addr}", flush=True)
+                    return
+
+                try:
+                    send_ws(data, opcode=websocket.ABNF.OPCODE_BINARY)
+                except Exception as exc:
+                    print(f"Deepgram send error: {exc}", flush=True)
+                    stop.set()
+                    break
+        except Exception as exc:
+            print(f"Deepgram connection error: {exc}", flush=True)
+            emit({"type": "status", "connected": False, "error": str(exc)})
+
+        # --- Deepgram session ended; attempt reconnection ---
         stop.set()
         try:
             if ws:
@@ -227,12 +254,43 @@ def transcriber(conn: socket.socket, addr: tuple[str, int]) -> None:
                 ws.close()
         except Exception:
             pass
-        try:
-            conn.close()
-        except Exception:
-            pass
-        emit({"type": "status", "connected": False, "source": "deepgram"})
-        print(f"Audio client disconnected: {addr}", flush=True)
+
+        reconnect_attempts += 1
+        if reconnect_attempts > MAX_RECONNECT:
+            print(
+                f"Deepgram reconnection exhausted after {MAX_RECONNECT} attempts.",
+                flush=True,
+            )
+            emit(
+                {
+                    "type": "status",
+                    "connected": False,
+                    "source": "deepgram",
+                    "reconnect_failed": True,
+                }
+            )
+            try:
+                conn.close()
+            except Exception:
+                pass
+            emit({"type": "status", "connected": False, "source": "deepgram"})
+            print(f"Audio client disconnected: {addr}", flush=True)
+            return
+
+        emit(
+            {
+                "type": "status",
+                "connected": False,
+                "source": "deepgram",
+                "reconnecting": True,
+                "attempt": reconnect_attempts,
+            }
+        )
+        print(
+            f"Reconnecting to Deepgram (attempt {reconnect_attempts}/{MAX_RECONNECT})...",
+            flush=True,
+        )
+        time.sleep(RECONNECT_DELAY)
 
 
 def audio_server() -> None:
