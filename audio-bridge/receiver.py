@@ -123,6 +123,16 @@ def transcriber(conn: socket.socket, addr: tuple[str, int]) -> None:
 
     ws = None
     stop = threading.Event()
+    ws_send_lock = threading.Lock()
+
+    def send_ws(payload: object, *, opcode: int | None = None) -> None:
+        if ws is None:
+            return
+        with ws_send_lock:
+            if opcode is None:
+                ws.send(payload)
+            else:
+                ws.send(payload, opcode=opcode)
 
     def read_deepgram() -> None:
         try:
@@ -130,8 +140,7 @@ def transcriber(conn: socket.socket, addr: tuple[str, int]) -> None:
                 try:
                     message = ws.recv()
                 except websocket.WebSocketTimeoutException:
-                    # The receive socket has a short timeout so shutdowns are responsive.
-                    # A timeout is not a disconnect; keep waiting for Deepgram results.
+                    # Short recv timeout keeps shutdown responsive. Timeout is not a disconnect.
                     continue
                 if not message:
                     break
@@ -169,6 +178,16 @@ def transcriber(conn: socket.socket, addr: tuple[str, int]) -> None:
         finally:
             stop.set()
 
+    def keepalive() -> None:
+        while not stop.wait(5):
+            try:
+                send_ws(json.dumps({"type": "KeepAlive"}))
+            except Exception as exc:
+                if not stop.is_set():
+                    print(f"Deepgram keepalive error: {exc}", flush=True)
+                stop.set()
+                break
+
     print(f"Audio client connected: {addr}", flush=True)
     try:
         ws = websocket.create_connection(
@@ -182,13 +201,15 @@ def transcriber(conn: socket.socket, addr: tuple[str, int]) -> None:
 
         reader = threading.Thread(target=read_deepgram, daemon=True)
         reader.start()
+        heartbeat = threading.Thread(target=keepalive, daemon=True)
+        heartbeat.start()
 
         while not stop.is_set():
             data = conn.recv(65536)
             if not data:
                 break
             try:
-                ws.send(data, opcode=websocket.ABNF.OPCODE_BINARY)
+                send_ws(data, opcode=websocket.ABNF.OPCODE_BINARY)
             except Exception as exc:
                 print(f"Deepgram send error: {exc}", flush=True)
                 break
@@ -200,7 +221,7 @@ def transcriber(conn: socket.socket, addr: tuple[str, int]) -> None:
         try:
             if ws:
                 try:
-                    ws.send(json.dumps({"type": "CloseStream"}))
+                    send_ws(json.dumps({"type": "CloseStream"}))
                 except Exception:
                     pass
                 ws.close()
