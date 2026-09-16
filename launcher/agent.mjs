@@ -1,6 +1,7 @@
 import http from 'node:http';
+import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 
 const CONFIG_PATH = process.env.LAUNCHER_CONFIG || new URL('./launcher.local.json', import.meta.url);
 const PORT = Number(process.env.LAUNCHER_AGENT_PORT || 38500);
@@ -8,7 +9,7 @@ const PIN = process.env.LAUNCHER_PIN || '3060';
 
 function loadConfig(){
   try{
-    const path=CONFIG_PATH instanceof URL?CONFIG_PATH.pathname:CONFIG_PATH;
+    const path = CONFIG_PATH instanceof URL ? CONFIG_PATH.pathname : CONFIG_PATH;
     return JSON.parse(readFileSync(path,'utf8'));
   }catch(err){
     return {machine:{name:'Unconfigured PC'},services:{},health:[],error:err.message};
@@ -29,7 +30,7 @@ function start(id){
   const child=spawn(s.command,{cwd:s.cwd||process.cwd(),shell:true,windowsHide:true,detached:false,env:{...process.env,...(s.env||{})}});
   const record={pid:child.pid,startedAt:new Date().toISOString(),child};
   running.set(id,record);
-  child.on('exit',(code,signal)=>running.delete(id));
+  child.on('exit',()=>running.delete(id));
   child.on('error',()=>running.delete(id));
   return record;
 }
@@ -44,7 +45,11 @@ async function health(item){
   const started=Date.now();
   try{
     if(item.type==='tcp'){
-      await new Promise((resolve,reject)=>{const s=require('node:net').createConnection({host:item.host,port:item.port,timeout:item.timeout||1200},()=>{s.destroy();resolve()});s.on('error',reject);s.on('timeout',()=>{s.destroy();reject(new Error('timeout'))})});
+      await new Promise((resolve,reject)=>{
+        const s=net.createConnection({host:item.host,port:item.port,timeout:item.timeout||1200},()=>{s.destroy();resolve()});
+        s.on('error',reject);
+        s.on('timeout',()=>{s.destroy();reject(new Error('timeout'))});
+      });
     }else{
       const c=new AbortController();const t=setTimeout(()=>c.abort(),item.timeout||1500);const r=await fetch(item.url,{signal:c.signal,cache:'no-store'});clearTimeout(t);if(!r.ok)throw new Error(`HTTP ${r.status}`);
     }
