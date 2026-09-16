@@ -1,0 +1,11 @@
+{
+  "name": "3V0L Mega Launcher",
+  "short_name": "3V0L Launcher",
+  "description": "Three-PC interview command center",
+  "start_url": "./dashboard.html",
+  "display": "standalone",
+  "background_color": "#080b10",
+  "theme_color": "#080b10",
+  "orientation": "landscape",
+  "icons": []
+}
