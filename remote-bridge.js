@@ -150,8 +150,7 @@
     }
 
     if(a==='call-next-step'){
-      key('Enter','Enter');
-      afterCallNavigation();
+      if(click('[data-action="call-next-step"]'))afterCallNavigation();
       return;
     }
 
