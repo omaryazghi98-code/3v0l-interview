@@ -1,3 +1,10 @@
 copilot/.env
 copilot/node_modules/
 copilot/*.log
+
+# Python artifacts
+audio-bridge/.env
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
