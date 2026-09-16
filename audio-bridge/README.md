@@ -1,14 +1,14 @@
 # 3V0L Audio Bridge
 
-The audio bridge captures audio rendered by the interview application's Windows process tree and can stream it to another PC as raw mono PCM16 over TCP.
+The audio bridge captures audio rendered by the interview PC and can stream it to another PC as raw mono PCM16 over TCP.
 
 ## Architecture
 
 ```text
 Interview PC / HP
-Windows process loopback
+Windows speaker output
         ↓
-3v0l-listener.exe
+3v0l-listener.exe --system
         ↓ TCP PCM16, 48 kHz, mono
 LAN :38472
         ↓
@@ -20,7 +20,9 @@ Deepgram Nova-3 realtime STT
 3V0L EV0L sidebar
 ```
 
-The sender does not use a microphone. It targets the interview application's process tree.
+System mode uses Windows render-loopback on the default playback device. It captures audio being rendered to the speakers/headphones and does not capture the microphone as an input device. A microphone is only present if Windows or an application deliberately routes microphone monitoring back into the playback output.
+
+The older process-loopback mode is still available when a specific application process needs to be targeted.
 
 ## Build sender
 
@@ -37,7 +39,25 @@ Executable:
 build\Release\3v0l-listener.exe
 ```
 
-## Local capture test
+## System speaker capture — recommended interview mode
+
+Capture everything rendered by the HP's default Windows playback device:
+
+```powershell
+.\build\Release\3v0l-listener.exe --system 10 system-test.wav
+```
+
+For the live interview bridge to the Acer:
+
+```powershell
+.\build\Release\3v0l-listener.exe --system 0 bridge.wav 192.168.11.103 38472
+```
+
+`0` means stream until interrupted. The sender converts the rendered audio to mono PCM16 at the playback device's sample rate and streams it over TCP.
+
+This mode does **not** require a Discord PID, and it works regardless of whether the interviewer audio comes from Discord, Google Meet, Teams, Zoom, a browser, or another Windows application.
+
+## Process loopback — optional legacy/test mode
 
 Find Discord's root PID:
 
@@ -51,21 +71,11 @@ Capture 10 seconds to WAV:
 .\build\Release\3v0l-listener.exe <PID> 10 discord-test.wav
 ```
 
-## LAN mode
-
-The sender already supports live TCP streaming:
-
-```powershell
-.\build\Release\3v0l-listener.exe <PID> 0 bridge.wav <ACER_IP> 38472
-```
-
-Example for the current LAN:
+Or stream a specific process tree to the Acer:
 
 ```powershell
 .\build\Release\3v0l-listener.exe <PID> 0 bridge.wav 192.168.11.103 38472
 ```
-
-`0` means stream until interrupted. The sender transmits raw mono PCM16 at 48 kHz.
 
 ## Acer receiver
 
@@ -90,7 +100,7 @@ LAN audio receiver listening on 0.0.0.0:38472
 EV0L transcript SSE: http://127.0.0.1:38473/events
 ```
 
-The receiver forwards the 48 kHz mono PCM stream to Deepgram Nova-3 using raw `linear16` streaming and emits interim/final interviewer transcripts to EV0L. Deepgram's current streaming documentation supports raw linear16 with explicit sample rate and Nova-3; `language=multi` can be used for multilingual streaming. citeturn865667search4turn865667search2
+The receiver forwards the PCM stream to Deepgram Nova-3 and emits interim/final interviewer transcripts to EV0L.
 
 ## Windows Firewall
 
