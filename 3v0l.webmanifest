@@ -1,0 +1,12 @@
+{
+  "name": "3V0L Interview Command Center",
+  "short_name": "3V0L Interview",
+  "description": "3V0L interview cockpit with Copilot, Call Lab and remote controls.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0a0c10",
+  "theme_color": "#0a0c10",
+  "orientation": "landscape",
+  "icons": []
+}
