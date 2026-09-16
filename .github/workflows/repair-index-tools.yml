@@ -1,0 +1,84 @@
+name: Verify Index Tool Repair
+
+on:
+  push:
+    branches:
+      - fix/index-tools-tested-2026-09-16
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rebuild app-v3 from known-good V3 and preserve stable additions
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess
+
+          path = Path('app-v3.js')
+          baseline = subprocess.check_output(
+              ['git', 'show', 'f260a013922acf910a4fb5ff313d7eb32b9a69fd:app-v3.js'],
+              text=True,
+              encoding='utf-8'
+          )
+          target = subprocess.check_output(
+              ['git', 'show', '009d94321db0a4ab2554f9a4bf076d32428d411d:app-v3.js'],
+              text=True,
+              encoding='utf-8'
+          )
+
+          base_lines = baseline.splitlines()
+          target_lines = target.splitlines()
+
+          def line(lines, marker):
+              matches = [x for x in lines if marker in x]
+              if len(matches) != 1:
+                  raise SystemExit(f'{marker}: expected 1 match, got {len(matches)}')
+              return matches[0]
+
+          esc_line = line(target_lines, "const esc=")
+          score_line = line(target_lines, "function score(")
+
+          base_lines[base_lines.index(line(base_lines, "const esc="))] = esc_line
+          base_lines[base_lines.index(line(base_lines, "function score("))] = score_line
+
+          go_i = next(i for i, x in enumerate(base_lines) if x.startswith('function go('))
+          base_lines.insert(go_i + 1, 'window.__3v0lGo=go;')
+          base_lines.insert(go_i + 2, 'window.__3v0lHome=home;')
+
+          path.write_text('\n'.join(base_lines) + '\n', encoding='utf-8', newline='\n')
+
+      - name: Syntax check
+        run: node --check app-v3.js
+
+      - name: Verify required views and navigation exports
+        shell: python
+        run: |
+          text = Path('app-v3.js').read_text(encoding='utf-8')
+          required = ('function search(', 'function panic(', 'function help(', 'function render(')
+          for symbol in required:
+              assert symbol in text, symbol
+          assert 'searchPage()' not in text
+          assert "if(state.route==='search')content=search();" in text
+          assert 'window.__3v0lGo=go;' in text
+          assert 'window.__3v0lHome=home;' in text
+          assert "content=category('gaming','🎮','GAMING')" in text
+          print('Verified required V3 views, search route, stable exports, and gaming route.')
+
+      - name: Show diff and commit repair
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- app-v3.js
+          git add app-v3.js
+          git diff --cached --check
+          git commit -m 'fix: restore index tool views without losing stable navigation'
+          git push
