@@ -1,11 +1,29 @@
 (() => {
   const SSE_URL = localStorage.getItem('3v0l-audio-sse') || 'http://127.0.0.1:38473/events';
   const COPILOT_URL = localStorage.getItem('3v0l-copilot-url') || 'http://127.0.0.1:38471';
+  const BASE_RETRY = 1000;
+  const MAX_RETRY = 15000;
+  const RETRY_FACTOR = 1.7;
+  const JITTER = 0.2;
+  const MAX_ATTEMPTS = 50;
+
   let source = null;
-  let retry = 1000;
+  let retry = BASE_RETRY;
+  let attempts = 0;
   let current = '';
   let lastAnalyzed = '';
   let fallbackTimer = 0;
+  let reconnectTimer = 0;
+  let connected = false;
+
+  function jitteredDelay(base) {
+    const jitter = base * JITTER * (Math.random() * 2 - 1);
+    return Math.min(Math.round(base + jitter), MAX_RETRY);
+  }
+
+  function emitStatus(detail) {
+    window.dispatchEvent(new CustomEvent('nexq-transcript-status', { detail }));
+  }
 
   function render() {
     const target = document.getElementById('cpTranscript');
@@ -45,19 +63,20 @@
   }
 
   function connect() {
+    clearTimeout(reconnectTimer);
     try {
       source = new EventSource(SSE_URL);
       source.onopen = () => {
-        retry = 1000;
-        window.dispatchEvent(new CustomEvent('nexq-transcript-status', {
-          detail: { connected: true, source: 'audio-bridge' }
-        }));
+        retry = BASE_RETRY;
+        attempts = 0;
+        connected = true;
+        emitStatus({ connected: true, source: 'audio-bridge' });
       };
       source.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
           if (payload.type === 'status') {
-            window.dispatchEvent(new CustomEvent('nexq-transcript-status', { detail: payload }));
+            emitStatus(payload);
             return;
           }
           if (payload.type !== 'speaker_transcript') return;
@@ -66,9 +85,6 @@
           if (!text) return;
 
           if (payload.is_final) {
-            // Deepgram can emit multiple FINAL segments for one question.
-            // Only speech_final marks the utterance boundary, so don't call the
-            // LLM for every segment and don't accumulate previous utterances.
             current = text;
             render();
             if (payload.speech_final) {
@@ -88,29 +104,82 @@
         } catch {}
       };
       source.onerror = () => {
-        window.dispatchEvent(new CustomEvent('nexq-transcript-status', {
-          detail: { connected: false, source: 'audio-bridge' }
-        }));
+        connected = false;
+        emitStatus({ connected: false, source: 'audio-bridge' });
         try { source.close(); } catch {}
-        setTimeout(connect, retry);
-        retry = Math.min(Math.round(retry * 1.7), 10000);
+        source = null;
+
+        attempts++;
+        if (attempts > MAX_ATTEMPTS) {
+          emitStatus({
+            connected: false,
+            source: 'audio-bridge',
+            retryExhausted: true,
+            attempts
+          });
+          return;
+        }
+
+        const delay = jitteredDelay(retry);
+        emitStatus({
+          connected: false,
+          source: 'audio-bridge',
+          reconnectAttempt: attempts,
+          nextRetryIn: delay
+        });
+        reconnectTimer = setTimeout(connect, delay);
+        retry = Math.min(Math.round(retry * RETRY_FACTOR), MAX_RETRY);
       };
     } catch {
-      setTimeout(connect, retry);
-      retry = Math.min(Math.round(retry * 1.7), 10000);
+      connected = false;
+      attempts++;
+      if (attempts > MAX_ATTEMPTS) {
+        emitStatus({
+          connected: false,
+          source: 'audio-bridge',
+          retryExhausted: true,
+          attempts
+        });
+        return;
+      }
+      const delay = jitteredDelay(retry);
+      emitStatus({
+        connected: false,
+        source: 'audio-bridge',
+        reconnectAttempt: attempts,
+        nextRetryIn: delay
+      });
+      reconnectTimer = setTimeout(connect, delay);
+      retry = Math.min(Math.round(retry * RETRY_FACTOR), MAX_RETRY);
     }
   }
 
   window.__3v0lAudioTranscript = {
-    reconnect: () => { try { source?.close(); } catch {} connect(); },
+    reconnect: () => {
+      clearTimeout(reconnectTimer);
+      clearTimeout(fallbackTimer);
+      try { source?.close(); } catch {}
+      source = null;
+      attempts = 0;
+      retry = BASE_RETRY;
+      connect();
+    },
     url: SSE_URL,
-    copilotUrl: COPILOT_URL
+    copilotUrl: COPILOT_URL,
+    getStatus: () => ({
+      connected,
+      source: 'audio-bridge',
+      attempts,
+      retryExhausted: attempts > MAX_ATTEMPTS
+    })
   };
 
   const renderTimer = setInterval(render, 500);
   window.addEventListener('beforeunload', () => {
     clearInterval(renderTimer);
     clearTimeout(fallbackTimer);
+    clearTimeout(reconnectTimer);
+    try { source?.close(); } catch {}
   });
   connect();
 })();

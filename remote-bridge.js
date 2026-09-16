@@ -1,6 +1,15 @@
 (()=>{
   const API=localStorage.getItem('3v0l-relay')||'http://127.0.0.1:38471';
   let last=Number(localStorage.getItem('3v0l-remote-cursor')||0);
+  const BASE_INTERVAL=250;
+  const MAX_INTERVAL=10000;
+  const RETRY_FACTOR=1.7;
+  const JITTER=0.2;
+
+  let interval=BASE_INTERVAL;
+  let offline=false;
+  let pollTimer=0;
+
   const click=s=>document.querySelector(s)?.click();
   const key=(code,keyValue=code)=>document.dispatchEvent(new KeyboardEvent('keydown',{code,key:keyValue,bubbles:true,cancelable:true}));
   const jump=route=>{
@@ -47,14 +56,54 @@
     if(a==='clear')return document.querySelector('[data-cp="clear"]')?.click();
     if(a==='ping')return;
   };
+
+  function jitteredInterval(base) {
+    const jitter = base * JITTER * (Math.random() * 2 - 1);
+    return Math.min(Math.round(base + jitter), MAX_INTERVAL);
+  }
+
+  function emitStatus(detail) {
+    window.dispatchEvent(new CustomEvent('nexq-remote-status', { detail }));
+  }
+
+  function schedulePoll() {
+    clearTimeout(pollTimer);
+    const delay = offline ? jitteredInterval(interval) : BASE_INTERVAL;
+    pollTimer = setTimeout(poll, delay);
+  }
+
   async function poll(){
     try{
-      const r=await fetch(`${API}/remote/commands?after=${last}`,{cache:'no-store'});if(!r.ok)return;
+      const r=await fetch(`${API}/remote/commands?after=${last}`,{cache:'no-store'});
+      if(!r.ok) throw new Error(`HTTP ${r.status}`);
       const data=await r.json();
       for(const cmd of data.commands||[]){last=Math.max(last,Number(cmd.id)||0);run(cmd)}
       localStorage.setItem('3v0l-remote-cursor',String(last));
-    }catch{}
+
+      // Reset backoff on successful poll
+      if (offline) {
+        offline = false;
+        interval = BASE_INTERVAL;
+        emitStatus({ connected: true, api: API });
+      }
+    }catch(err){
+      if (!offline) {
+        offline = true;
+        emitStatus({ connected: false, api: API, error: String(err.message || err) });
+      }
+      interval = Math.min(Math.round(interval * RETRY_FACTOR), MAX_INTERVAL);
+      emitStatus({ connected: false, api: API, nextRetryIn: jitteredInterval(interval) });
+    }
+    schedulePoll();
   }
-  setInterval(poll,250);poll();
-  window.__3v0lRemote={api:API,resetCursor:()=>{last=0;localStorage.setItem('3v0l-remote-cursor','0')}};
+
+  window.__3v0lRemote={
+    api:API,
+    resetCursor:()=>{last=0;localStorage.setItem('3v0l-remote-cursor','0')},
+    getStatus:()=>({ connected: !offline, api: API, interval })
+  };
+
+  window.addEventListener('beforeunload',()=>{clearTimeout(pollTimer)});
+
+  poll();
 })();
