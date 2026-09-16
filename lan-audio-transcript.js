@@ -1,9 +1,11 @@
 (() => {
   const SSE_URL = localStorage.getItem('3v0l-audio-sse') || 'http://127.0.0.1:38473/events';
+  const COPILOT_URL = localStorage.getItem('3v0l-copilot-url') || 'http://127.0.0.1:38471';
   let source = null;
   let retry = 1000;
   let finals = [];
   let interim = '';
+  let lastAnalyzed = '';
 
   function render() {
     const target = document.getElementById('cpTranscript');
@@ -13,6 +15,33 @@
     if (interim) parts.push(interim);
     if (!parts.length) return;
     target.textContent = parts.join('\n');
+  }
+
+  async function sendToCopilot(text) {
+    const clean = String(text || '').trim();
+    if (!clean || clean === lastAnalyzed) return;
+    lastAnalyzed = clean;
+
+    // Prefer the live copilot object when the UI has initialized, but keep a
+    // direct relay path so audio/STT can start before the sidebar is ready.
+    try {
+      if (window.__3v0lCopilot?.analyze) {
+        await window.__3v0lCopilot.analyze(clean);
+        return;
+      }
+    } catch {}
+
+    try {
+      await fetch(`${COPILOT_URL}/event`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          transcript: clean,
+          speaker: 'interviewer',
+          final: true
+        })
+      });
+    } catch {}
   }
 
   function connect() {
@@ -40,13 +69,13 @@
             finals.push(text);
             finals = finals.slice(-6);
             interim = '';
+            void sendToCopilot(text);
           } else {
             interim = text;
           }
 
           window.__3v0lLastInterviewerTranscript = text;
           window.dispatchEvent(new CustomEvent('nexq-speaker-transcript', { detail: payload }));
-          try { window.__3v0lCopilot?.analyze?.(text); } catch {}
           render();
         } catch {}
       };
@@ -66,11 +95,10 @@
 
   window.__3v0lAudioTranscript = {
     reconnect: () => { try { source?.close(); } catch {} connect(); },
-    url: SSE_URL
+    url: SSE_URL,
+    copilotUrl: COPILOT_URL
   };
 
-  // EV0L's copilot panel can be created after boot, so keep the latest text and
-  // render again shortly after startup.
   const renderTimer = setInterval(render, 500);
   window.addEventListener('beforeunload', () => clearInterval(renderTimer));
   connect();
