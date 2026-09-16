@@ -18,7 +18,7 @@ if (existsSync(envPath)) {
 }
 
 // The Python audio bridge owns 38472/38473. Node owns only the copilot relay
-// on 38471 unless an operator explicitly overrides AUDIO_ENABLED=1.
-if (process.env.AUDIO_ENABLED === undefined) process.env.AUDIO_ENABLED = '0';
+// on 38471. Explicitly opt into the legacy Node STT server with NODE_STT_SERVER=1.
+if (process.env.NODE_STT_SERVER !== '1') process.env.AUDIO_ENABLED = '0';
 
 await import('./server.mjs');
