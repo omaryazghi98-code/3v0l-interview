@@ -20,6 +20,12 @@ const REQUESTY_KEY = process.env.REQUESTY_API_KEY || '';
 const LLM_PRIMARY = String(process.env.LLM_PRIMARY || 'requesty').toLowerCase();
 const REMOTE_PIN = process.env.REMOTE_PIN || '3060';
 const ANSWER_LANGUAGE = process.env.ANSWER_LANGUAGE || 'fr';
+// When the external Python receiver handles STT (default), the Node STT
+// server is disabled and audio comes in as transcript POSTs to /event.
+const NODE_STT_ENABLED = process.env.NODE_STT_SERVER === '1';
+const AUDIO_PROVIDER = NODE_STT_ENABLED ? 'node-stt' : 'external-python';
+const SSE_URL = process.env.SSE_URL || 'http://127.0.0.1:38473/events';
+const AUDIO_PORT = Number(process.env.AUDIO_PORT || 38472);
 let llmEnabled = true;
 let state = {
   connectedAt: new Date().toISOString(), lastEventAt: null, speaker: null, transcript: '', final: false,
@@ -114,7 +120,8 @@ async function handleEvent(payload){
 const server=http.createServer(async(req,res)=>{ try {
   const url=new URL(req.url,`http://${req.headers.host||'localhost'}`);
   if(req.method==='OPTIONS'){res.writeHead(204,{'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type'});return res.end();}
-  if(url.pathname==='/health'&&req.method==='GET') return json(res,200,{ok:true,model:providerConfig(LLM_PRIMARY)?.model,llm:llmStatus(),remoteConfigured:true,state});
+  if(url.pathname==='/health'&&req.method==='GET') return json(res,200,{ok:true,model:providerConfig(LLM_PRIMARY)?.model,llm:llmStatus(),remoteConfigured:true,audioProvider:AUDIO_PROVIDER,audioPort:AUDIO_PORT,sseUrl:NODE_STT_ENABLED?null:SSE_URL,state});
+  if(url.pathname==='/audio-status'&&req.method==='GET') return json(res,200,{ok:true,provider:AUDIO_PROVIDER,audioPort:AUDIO_PORT,sseUrl:NODE_STT_ENABLED?null:SSE_URL,nodeSttEnabled:NODE_STT_ENABLED});
   if(url.pathname==='/state'&&req.method==='GET') return json(res,200,{...state,apis:{llm:llmStatus()}});
   if(url.pathname==='/config'&&req.method==='GET') return json(res,200,{llm:llmStatus(),requestyConfigured:!!REQUESTY_KEY,cerebrasConfigured:!!CEREBRAS_KEY});
   if(url.pathname==='/config'&&req.method==='POST'){const body=await parseBody(req);if(typeof body.llm==='boolean')llmEnabled=body.llm;return json(res,200,{llm:llmStatus()});}
@@ -130,4 +137,4 @@ const server=http.createServer(async(req,res)=>{ try {
  } catch(err){ return json(res,500,{error:String(err.message||err)}); }});
 
 async function serveFile(path,type,res){ try { const body=await readFile(join(dirname(fileURLToPath(import.meta.url)),path)); res.writeHead(200,{'content-type':type,'cache-control':'no-store'}); res.end(body); } catch { json(res,404,{error:'not found'}); } }
-server.listen(PORT,HOST,()=>{const hosts=lanAddresses();console.log(`3V0L Copilot relay listening on http://${HOST}:${PORT}`);console.log(`3V0L Remote: ${hosts[0]?`http://${hosts[0]}:${PORT}/remote`:`http://localhost:${PORT}/remote`}`);console.log(`LLM primary: ${LLM_PRIMARY}`);console.log(`Cerebras: ${CEREBRAS_KEY?'configured':'not configured'}`);console.log(`Requesty: ${REQUESTY_KEY?'configured':'not configured'}`);});
+server.listen(PORT,HOST,()=>{const hosts=lanAddresses();console.log(`3V0L Copilot relay listening on http://${HOST}:${PORT}`);console.log(`3V0L Remote: ${hosts[0]?`http://${hosts[0]}:${PORT}/remote`:`http://localhost:${PORT}/remote`}`);console.log(`LLM primary: ${LLM_PRIMARY}`);console.log(`Cerebras: ${CEREBRAS_KEY?'configured':'not configured'}`);console.log(`Requesty: ${REQUESTY_KEY?'configured':'not configured'}`);console.log(`Audio provider: ${AUDIO_PROVIDER}${NODE_STT_ENABLED?'':` (SSE: ${SSE_URL})`}`);});
