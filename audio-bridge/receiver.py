@@ -1,9 +1,8 @@
 """3V0L LAN PCM receiver -> Deepgram realtime STT -> browser SSE.
 
-Runs on PC3/Acer. The Windows process-loopback listener on the interview PC
-connects to TCP_PORT and streams raw mono PCM16 at 48 kHz. This receiver
-forwards that audio to Deepgram Nova-3 and exposes transcript events locally
-via SSE for EV0L.
+Runs on PC3/Acer. The Windows system speaker loopback listener on the interview
+PC connects to TCP_PORT and streams raw mono PCM16. This receiver forwards that
+audio to Deepgram Nova-3 and exposes transcript events locally via SSE for EV0L.
 
 Environment:
   DEEPGRAM_API_KEY  required
@@ -33,7 +32,6 @@ DEEPGRAM_MODEL = os.getenv("DEEPGRAM_MODEL", "nova-3")
 DEEPGRAM_LANGUAGE = os.getenv("DEEPGRAM_LANGUAGE", "multi")
 SAMPLE_RATE = 48000
 CHANNELS = 1
-
 
 sse_clients: set[object] = set()
 sse_lock = threading.Lock()
@@ -119,7 +117,7 @@ def deepgram_url() -> str:
 def transcriber(conn: socket.socket, addr: tuple[str, int]) -> None:
     api_key = os.getenv("DEEPGRAM_API_KEY", "").strip()
     if not api_key:
-        print("ERROR: DEEPGRAM_API_KEY is not set; cannot transcribe.")
+        print("ERROR: DEEPGRAM_API_KEY is not set; cannot transcribe.", flush=True)
         conn.close()
         return
 
@@ -129,7 +127,12 @@ def transcriber(conn: socket.socket, addr: tuple[str, int]) -> None:
     def read_deepgram() -> None:
         try:
             while not stop.is_set():
-                message = ws.recv()
+                try:
+                    message = ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    # The receive socket has a short timeout so shutdowns are responsive.
+                    # A timeout is not a disconnect; keep waiting for Deepgram results.
+                    continue
                 if not message:
                     break
                 if isinstance(message, bytes):
@@ -196,7 +199,10 @@ def transcriber(conn: socket.socket, addr: tuple[str, int]) -> None:
         stop.set()
         try:
             if ws:
-                ws.send(json.dumps({"type": "CloseStream"}))
+                try:
+                    ws.send(json.dumps({"type": "CloseStream"}))
+                except Exception:
+                    pass
                 ws.close()
         except Exception:
             pass
