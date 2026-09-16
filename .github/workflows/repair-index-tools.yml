@@ -62,6 +62,7 @@ jobs:
       - name: Verify required views and navigation exports
         shell: python
         run: |
+          from pathlib import Path
           text = Path('app-v3.js').read_text(encoding='utf-8')
           required = ('function search(', 'function panic(', 'function help(', 'function render(')
           for symbol in required:
@@ -71,14 +72,19 @@ jobs:
           assert 'window.__3v0lGo=go;' in text
           assert 'window.__3v0lHome=home;' in text
           assert "content=category('gaming','🎮','GAMING')" in text
+          assert 'tegory(' not in text
           print('Verified required V3 views, search route, stable exports, and gaming route.')
 
-      - name: Show diff and commit repair
+      - name: Commit repair only when changed
         shell: bash
         run: |
           git diff --check
-          git diff -- app-v3.js
           git add app-v3.js
           git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'No app-v3.js changes needed.'
+            exit 0
+          fi
+          git diff --cached -- app-v3.js
           git commit -m 'fix: restore index tool views without losing stable navigation'
           git push
