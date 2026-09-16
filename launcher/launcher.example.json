@@ -1,0 +1,24 @@
+{
+  "machine": { "name": "Acer · 3V0L AI" },
+  "services": {
+    "audio-receiver": {
+      "name": "Deepgram Audio Receiver",
+      "description": "LAN PCM receiver + Deepgram realtime STT",
+      "cwd": "C:\\Users\\omary\\3v0l-interview\\audio-bridge",
+      "command": "python receiver.py",
+      "autostart": false
+    },
+    "copilot-relay": {
+      "name": "3V0L Copilot Relay",
+      "description": "AI relay on TCP 38471",
+      "cwd": "C:\\Users\\omary\\3v0l-interview\\copilot",
+      "command": "node server.mjs",
+      "autostart": true
+    }
+  },
+  "health": [
+    { "name": "Copilot relay", "type": "http", "url": "http://127.0.0.1:38471/health" },
+    { "name": "Audio receiver", "type": "tcp", "host": "127.0.0.1", "port": 38472 },
+    { "name": "Transcript SSE", "type": "http", "url": "http://127.0.0.1:38473/events" }
+  ]
+}
