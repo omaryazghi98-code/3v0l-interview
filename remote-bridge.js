@@ -13,6 +13,20 @@
     if(view && view.scrollHeight>view.clientHeight+2)return view;
     return null;
   };
+  const keepSelectedCallInView=()=>{
+    const steps=document.querySelector('.call-steps');
+    const selected=steps?.querySelector('.call-step.selected');
+    if(!steps||!selected)return;
+    const sTop=selected.offsetTop;
+    const sBottom=sTop+selected.offsetHeight;
+    const vTop=steps.scrollTop;
+    const vBottom=vTop+steps.clientHeight;
+    const margin=28;
+    if(sTop< vTop+margin || sBottom>vBottom-margin){
+      selected.scrollIntoView({block:'center',behavior:'smooth'});
+    }
+  };
+  const afterCallNavigation=()=>requestAnimationFrame(()=>requestAnimationFrame(keepSelectedCallInView));
   const stopRemoteAuto=()=>{
     if(autoRaf){cancelAnimationFrame(autoRaf);autoRaf=0;}
   };
@@ -54,9 +68,21 @@
       if(b)b.click(); else key('ArrowLeft','ArrowLeft');
       return;
     }
-    if(a==='next-call')return click('[data-action="next-call"]')||key('ArrowRight','ArrowRight');
-    if(a==='prev-call')return click('[data-action="prev-call"]')||key('ArrowLeft','ArrowLeft');
-    if(a==='call-next-step')return key('Enter','Enter');
+    if(a==='next-call'){
+      if(click('[data-action="next-call"]'))afterCallNavigation();
+      else {key('ArrowRight','ArrowRight');afterCallNavigation();}
+      return;
+    }
+    if(a==='prev-call'){
+      if(click('[data-action="prev-call"]'))afterCallNavigation();
+      else {key('ArrowLeft','ArrowLeft');afterCallNavigation();}
+      return;
+    }
+    if(a==='call-next-step'){
+      key('Enter','Enter');
+      afterCallNavigation();
+      return;
+    }
     if(a==='scroll-down'){const t=scrollTarget();if(t)t.scrollBy({top:220,behavior:'smooth'});return;}
     if(a==='scroll-up'){const t=scrollTarget();if(t)t.scrollBy({top:-220,behavior:'smooth'});return;}
     if(a==='toggle-auto'){
